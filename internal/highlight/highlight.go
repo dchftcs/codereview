@@ -18,12 +18,22 @@ var (
 	lexerCache sync.Map
 )
 
-func init() {
+// Init sets the Chroma style based on the theme. Call before using Line().
+// Use "dark" for dark terminals (monokai), "light" for light terminals (github).
+func Init(theme string) {
 	fmtr = formatters.TTY256
-	style = styles.Get("monokai")
+	styleName := "monokai"
+	if theme == "light" {
+		styleName = "github"
+	}
+	style = styles.Get(styleName)
 	if style == nil {
 		style = styles.Fallback
 	}
+}
+
+func init() {
+	Init("dark")
 }
 
 // Line highlights a single line of code given the filename (for language detection).
@@ -44,9 +54,10 @@ func Line(filename, content string) string {
 		return content
 	}
 
-	// Trim trailing newline that chroma may add
+	// Remove any newlines that chroma may insert — we highlight single lines,
+	// so newlines in the output would break layout.
 	result := buf.String()
-	result = strings.TrimRight(result, "\n")
+	result = strings.ReplaceAll(result, "\n", "")
 	return result
 }
 

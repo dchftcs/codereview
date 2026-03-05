@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dc/codereview/internal/diff"
@@ -35,60 +36,99 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 		fileMap[name] = f
 	}
 
-	for filename, comments := range commentsByFile {
-		sb.WriteString(fmt.Sprintf("## %s\n\n", filename))
+	// Sort filenames for deterministic output
+	var filenames []string
+	for filename := range commentsByFile {
+		filenames = append(filenames, filename)
+	}
+	sort.Strings(filenames)
+
+	for _, filename := range filenames {
+		comments := commentsByFile[filename]
+		sort.SliceStable(comments, func(i, j int) bool {
+			if comments[i].Line != comments[j].Line {
+				return comments[i].Line < comments[j].Line
+			}
+			return comments[i].Text < comments[j].Text
+		})
+
+		sb.WriteString(fmt.Sprintf("## File: `%s`\n\n", filename))
+		sb.WriteString(fmt.Sprintf("Inline comments: %d\n\n", len(comments)))
 
 		f := fileMap[filename]
 
-		for _, comment := range comments {
-			// Find the line context
-			context := findLineContext(f, comment.Line)
+		for i, comment := range comments {
+			context := findLineSnippet(f, comment.Line)
 			lineType := classifyLine(f, comment.Line)
 
-			sb.WriteString(fmt.Sprintf("### Line %d (%s)\n", comment.Line, lineType))
+			sb.WriteString(fmt.Sprintf("### Comment %d\n", i+1))
+			sb.WriteString(fmt.Sprintf("- Location: line %d (%s)\n", comment.Line, lineType))
 			if context != "" {
 				ext := fileExtension(filename)
+				sb.WriteString("- Snippet:\n")
 				sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n", ext, context))
+			} else {
+				sb.WriteString("- Snippet: unavailable in current diff context\n")
 			}
-			sb.WriteString(fmt.Sprintf("**Comment:** %s\n\n", comment.Text))
+			sb.WriteString(fmt.Sprintf("- Feedback: %s\n\n", comment.Text))
 		}
 	}
 
-	if rev.GeneralComment != "" {
+	if len(rev.GeneralComments) > 0 {
 		sb.WriteString("## General Comments\n\n")
-		sb.WriteString(fmt.Sprintf("- %s\n", rev.GeneralComment))
+		for _, gc := range rev.GeneralComments {
+			sb.WriteString(fmt.Sprintf("- %s\n", gc))
+		}
 	}
 
-	if len(rev.Comments) == 0 && rev.GeneralComment == "" {
+	if len(rev.Comments) == 0 && len(rev.GeneralComments) == 0 {
 		sb.WriteString("No comments.\n")
 	}
 
 	return sb.String()
 }
 
-func findLineContext(f *diff.FileDiff, lineNum int) string {
+func findLineSnippet(f *diff.FileDiff, lineNum int) string {
 	if f == nil {
 		return ""
 	}
-	// Collect up to 3 lines of context around the target line
-	var contextLines []string
+
+	type entry struct {
+		num     int
+		content string
+	}
+
+	var entries []entry
 	for _, h := range f.Hunks {
 		for _, pair := range h.Pairs {
-			num := 0
-			var content string
+			e := entry{}
 			if pair.Right != nil {
-				num = pair.Right.NewNum
-				content = pair.Right.Content
+				e.num = pair.Right.NewNum
+				e.content = pair.Right.Content
 			} else if pair.Left != nil {
-				num = pair.Left.OldNum
-				content = pair.Left.Content
+				e.num = pair.Left.OldNum
+				e.content = pair.Left.Content
 			}
-			if num >= lineNum-1 && num <= lineNum+1 && content != "" {
-				contextLines = append(contextLines, content)
+			if e.num > 0 && e.content != "" {
+				entries = append(entries, e)
 			}
 		}
 	}
-	return strings.Join(contextLines, "\n")
+
+	const radius = 2
+	var snippet []string
+	for _, e := range entries {
+		if e.num < lineNum-radius || e.num > lineNum+radius {
+			continue
+		}
+		prefix := "  "
+		if e.num == lineNum {
+			prefix = ">>"
+		}
+		snippet = append(snippet, fmt.Sprintf("%s %4d | %s", prefix, e.num, e.content))
+	}
+
+	return strings.Join(snippet, "\n")
 }
 
 func classifyLine(f *diff.FileDiff, lineNum int) string {
@@ -100,13 +140,18 @@ func classifyLine(f *diff.FileDiff, lineNum int) string {
 			if pair.Right != nil && pair.Right.NewNum == lineNum {
 				switch pair.Right.Op {
 				case diff.OpInsert:
-					return "added"
-				case diff.OpEqual:
+					// If paired with a delete, it's a modification
 					if pair.Left != nil && pair.Left.Op == diff.OpDelete {
 						return "modified"
 					}
+					return "added"
+				case diff.OpEqual:
 					return "context"
 				}
+			}
+			// Also check old-side only lines (deletions)
+			if pair.Left != nil && pair.Right == nil && pair.Left.OldNum == lineNum {
+				return "deleted"
 			}
 		}
 	}

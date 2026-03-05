@@ -1,0 +1,144 @@
+package tui
+
+import (
+	"testing"
+
+	"github.com/dc/codereview/internal/diff"
+	"github.com/dc/codereview/internal/review"
+)
+
+func TestMoveCursorToScrollsNearBottomWithMargin(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.height = 20
+	dv.setFile(makeLargeFileDiff(80), review.New())
+
+	dv.moveCursorTo(15)
+
+	if dv.scrollY != 1 {
+		t.Fatalf("scrollY after moving near bottom = %d, want 1", dv.scrollY)
+	}
+}
+
+func TestMoveCursorToScrollsNearTopWithMargin(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.height = 20
+	dv.setFile(makeLargeFileDiff(80), review.New())
+
+	dv.moveCursorTo(30)
+	if dv.scrollY == 0 {
+		t.Fatal("expected initial downward scroll to be non-zero")
+	}
+
+	dv.moveCursorTo(20)
+
+	if dv.scrollY != 15 {
+		t.Fatalf("scrollY after moving near top = %d, want 15", dv.scrollY)
+	}
+}
+
+func TestSetFileKeepPositionPreservesInsertVsDeleteAnchor(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.height = 20
+	dv.setFile(makeDuplicateLineNumDiff(), review.New())
+
+	insertRow := -1
+	for i, row := range dv.rows {
+		if row.kind != rowDiffPair || row.lineNum != 2 || row.pair == nil {
+			continue
+		}
+		if row.pair.Left == nil && row.pair.Right != nil {
+			insertRow = i
+			break
+		}
+	}
+	if insertRow == -1 {
+		t.Fatal("failed to find insert row for lineNum=2")
+	}
+
+	dv.cursorY = insertRow
+	dv.scrollY = 0
+	dv.setFileKeepPosition(makeDuplicateLineNumDiff(), review.New())
+
+	row := dv.rows[dv.cursorY]
+	if row.pair == nil || row.pair.Left != nil || row.pair.Right == nil {
+		t.Fatalf("cursor anchor changed; got left=%v right=%v", row.pair.Left != nil, row.pair.Right != nil)
+	}
+}
+
+func TestSetFileKeepPositionPreservesScreenRow(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.height = 20
+	dv.setFile(makeLargeFileDiff(80), review.New())
+
+	dv.cursorY = 30
+	dv.scrollY = 15
+	wantScreenRow := dv.cursorY - dv.scrollY
+	wantLineNum := dv.rows[dv.cursorY].lineNum
+
+	dv.setFileKeepPosition(makeLargeFileDiff(80), review.New())
+
+	if got := dv.cursorY - dv.scrollY; got != wantScreenRow {
+		t.Fatalf("screen row after keep-position = %d, want %d", got, wantScreenRow)
+	}
+	if got := dv.rows[dv.cursorY].lineNum; got != wantLineNum {
+		t.Fatalf("line num after keep-position = %d, want %d", got, wantLineNum)
+	}
+}
+
+func makeLargeFileDiff(lines int) *diff.FileDiff {
+	pairs := make([]diff.LinePair, 0, lines)
+	for i := 1; i <= lines; i++ {
+		pairs = append(pairs, diff.LinePair{
+			Left:  &diff.DiffLine{Op: diff.OpEqual, Content: "line", OldNum: i, NewNum: i},
+			Right: &diff.DiffLine{Op: diff.OpEqual, Content: "line", OldNum: i, NewNum: i},
+		})
+	}
+	return &diff.FileDiff{
+		OldName: "x.go",
+		NewName: "x.go",
+		Hunks: []diff.Hunk{{
+			OldStart: 1,
+			OldCount: lines,
+			NewStart: 1,
+			NewCount: lines,
+			Pairs:    pairs,
+		}},
+	}
+}
+
+func makeDuplicateLineNumDiff() *diff.FileDiff {
+	return &diff.FileDiff{
+		OldName: "x.go",
+		NewName: "x.go",
+		Hunks: []diff.Hunk{{
+			OldStart: 1,
+			OldCount: 3,
+			NewStart: 1,
+			NewCount: 3,
+			Pairs: []diff.LinePair{
+				{
+					Left:  &diff.DiffLine{Op: diff.OpEqual, Content: "a", OldNum: 1, NewNum: 1},
+					Right: &diff.DiffLine{Op: diff.OpEqual, Content: "a", OldNum: 1, NewNum: 1},
+				},
+				{
+					Left: &diff.DiffLine{Op: diff.OpDelete, Content: "old", OldNum: 2},
+				},
+				{
+					Right: &diff.DiffLine{Op: diff.OpInsert, Content: "new", NewNum: 2},
+				},
+				{
+					Left:  &diff.DiffLine{Op: diff.OpEqual, Content: "c", OldNum: 3, NewNum: 3},
+					Right: &diff.DiffLine{Op: diff.OpEqual, Content: "c", OldNum: 3, NewNum: 3},
+				},
+			},
+		}},
+	}
+}

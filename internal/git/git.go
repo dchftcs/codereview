@@ -34,26 +34,75 @@ func Log(n int) ([]CommitInfo, error) {
 
 // Diff returns the unified diff for the given revision spec.
 // If revSpec is empty, returns uncommitted changes (working tree vs HEAD).
+// Supports two-dot (a..b) and three-dot (a...b) syntax.
 func Diff(revSpec string) (string, error) {
-	if revSpec == "" {
-		return run("diff", "HEAD")
-	}
-	// Check if it's a range (contains ..)
-	if strings.Contains(revSpec, "..") {
-		return run("diff", revSpec)
-	}
-	// Single commit — show its diff
-	return run("diff", revSpec+"~1", revSpec)
+	return diffInternal(revSpec, false)
 }
 
-// DiffUnstaged returns diff of uncommitted changes (both staged and unstaged vs HEAD).
-func DiffUnstaged() (string, error) {
-	return run("diff", "HEAD")
+// DiffFull returns the diff with full file context (all lines visible).
+func DiffFull(revSpec string) (string, error) {
+	return diffInternal(revSpec, true)
+}
+
+func diffInternal(revSpec string, fullContext bool) (string, error) {
+	ctx := []string{}
+	if fullContext {
+		ctx = []string{"-U99999"}
+	}
+	if revSpec == "" {
+		return run(append([]string{"diff"}, append(ctx, "HEAD")...)...)
+	}
+	// Three-dot: diff from merge-base (branch changes only)
+	if strings.Contains(revSpec, "...") {
+		parts := strings.SplitN(revSpec, "...", 2)
+		base, head := parts[0], parts[1]
+		mergeBase, err := MergeBase(base, head)
+		if err != nil {
+			return "", fmt.Errorf("finding merge base: %w", err)
+		}
+		return run(append([]string{"diff"}, append(ctx, mergeBase, head)...)...)
+	}
+	// Two-dot range
+	if strings.Contains(revSpec, "..") {
+		return run(append([]string{"diff"}, append(ctx, revSpec)...)...)
+	}
+	// Single commit — use show to handle root commits (no parent)
+	args := append([]string{"show", "--format="}, append(ctx, revSpec)...)
+	return run(args...)
 }
 
 // Show returns the diff for a single commit.
 func Show(commit string) (string, error) {
 	return run("show", "--format=", commit)
+}
+
+// CurrentBranch returns the current branch name.
+func CurrentBranch() (string, error) {
+	out, err := run("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// MergeBase returns the merge base (fork point) between two refs.
+func MergeBase(a, b string) (string, error) {
+	out, err := run("merge-base", a, b)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// DefaultBranch returns "main" or "master", whichever exists.
+func DefaultBranch() string {
+	if out, err := run("rev-parse", "--verify", "main"); err == nil && strings.TrimSpace(out) != "" {
+		return "main"
+	}
+	if out, err := run("rev-parse", "--verify", "master"); err == nil && strings.TrimSpace(out) != "" {
+		return "master"
+	}
+	return "main"
 }
 
 func run(args ...string) (string, error) {

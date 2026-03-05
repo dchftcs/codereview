@@ -10,7 +10,7 @@ type Comment struct {
 // Review holds all comments and metadata for a code review session.
 type Review struct {
 	Comments       []Comment `json:"comments"`
-	GeneralComment string    `json:"general_comment,omitempty"`
+	GeneralComments []string `json:"general_comments,omitempty"`
 	CommitHash     string    `json:"commit_hash,omitempty"`
 	CommitSubject  string    `json:"commit_subject,omitempty"`
 }
@@ -27,6 +27,10 @@ func (r *Review) AddComment(file string, line int, text string) {
 	})
 }
 
+func (r *Review) AddGeneralComment(text string) {
+	r.GeneralComments = append(r.GeneralComments, text)
+}
+
 func (r *Review) DeleteComment(file string, line int) {
 	var kept []Comment
 	for _, c := range r.Comments {
@@ -36,6 +40,15 @@ func (r *Review) DeleteComment(file string, line int) {
 		kept = append(kept, c)
 	}
 	r.Comments = kept
+}
+
+func (r *Review) FindComment(file string, line int) *Comment {
+	for i := range r.Comments {
+		if r.Comments[i].File == file && r.Comments[i].Line == line {
+			return &r.Comments[i]
+		}
+	}
+	return nil
 }
 
 func (r *Review) CommentsForFile(file string) []Comment {

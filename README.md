@@ -64,29 +64,50 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 
 Pressing `s` outputs a markdown document (to stdout or a file with `-o`) structured for a coding agent:
 
-```markdown
+````markdown
 # Code Review
 
 **Commit:** abc1234 feat: add user auth
 
-## src/auth.go
+## File: `src/auth.go`
 
-### Line 42 (added)
-\```go
-if user.IsAdmin() {
-\```
-**Comment:** This check is missing rate limiting.
+Inline comments: 2
 
-### Line 78 (modified)
-\```go
-func validateToken(t string) bool {
-    return len(t) > 0
-}
-\```
-**Comment:** Token validation should check signature and expiry.
+### Comment 1
+- Location: line 42 (added)
+- Snippet:
+```go
+     40 | func isAllowed(user User) bool {
+     41 |     // ...
+>>   42 | if user.IsAdmin() {
+     43 |     return true
+     44 | }
 ```
+- Feedback: This check is missing rate limiting.
 
-Each comment includes the file path, line number, classification (added/modified/context/deleted), surrounding code context, and the review comment. This format is designed to be directly consumable by LLM coding agents.
+### Comment 2
+- Location: line 78 (modified)
+- Snippet:
+```go
+     76 | func validateToken(t string) bool {
+     77 |     // TODO: signature + expiry validation
+>>   78 |     return len(t) > 0
+     79 | }
+```
+- Feedback: Token validation should check signature and expiry.
+
+## General Comments
+
+- Add tests for invalid/expired tokens.
+````
+
+Inline comments are grouped by file, files are sorted alphabetically, and comments are sorted by line number.  
+Each inline comment includes the location (`added` / `modified` / `context` / `deleted`), a small snippet centered on the commented line, and feedback text.  
+If no snippet can be resolved from the current diff context, output uses:
+
+```markdown
+- Snippet: unavailable in current diff context
+```
 
 ## Requirements
 

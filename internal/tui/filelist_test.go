@@ -52,12 +52,35 @@ func TestSearchModifiedListPrioritizesBestFilenameMatch(t *testing.T) {
 	}
 }
 
+func TestNewFileListSelectsFirstFileNotDirectory(t *testing.T) {
+	t.Parallel()
+
+	fl := newFileList([]diff.FileDiff{
+		{NewName: "nested/a.go"},
+		{NewName: "nested/b.go"},
+	})
+
+	path, isDir, ok := fl.selectedTreePath()
+	if !ok {
+		t.Fatal("selectedTreePath returned no selection")
+	}
+	if isDir {
+		t.Fatalf("selected path %q is a directory, want a file", path)
+	}
+	if path != "nested/a.go" {
+		t.Fatalf("selected path = %q, want %q", path, "nested/a.go")
+	}
+	if fl.selected != 0 {
+		t.Fatalf("selected diff index = %d, want 0", fl.selected)
+	}
+}
+
 func TestModifiedJumpsInTreeMode(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := filepath.Clean("/tmp/repo")
 	fl := fileList{
-		mode:     fileListModeTree,
+		mode:     fileListModeFullTree,
 		repoRoot: repoRoot,
 		files: []diff.FileDiff{
 			{NewName: "a.go"},

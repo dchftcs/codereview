@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/codereview/internal/diff"
 	"github.com/dc/codereview/internal/review"
 )
@@ -16,8 +17,8 @@ func TestMoveCursorToScrollsNearBottomWithMargin(t *testing.T) {
 
 	dv.moveCursorTo(15)
 
-	if dv.scrollY != 1 {
-		t.Fatalf("scrollY after moving near bottom = %d, want 1", dv.scrollY)
+	if dv.scrollY != 2 {
+		t.Fatalf("scrollY after moving near bottom = %d, want 2", dv.scrollY)
 	}
 }
 
@@ -90,6 +91,28 @@ func TestSetFileKeepPositionPreservesScreenRow(t *testing.T) {
 	}
 	if got := dv.rows[dv.cursorY].lineNum; got != wantLineNum {
 		t.Fatalf("line num after keep-position = %d, want %d", got, wantLineNum)
+	}
+}
+
+func TestViewWithPathHeightStableForShortAndFullDiffs(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 12
+
+	dv.setFile(makeLargeFileDiff(3), review.New())
+	shortH := lipgloss.Height(dv.viewWithPath("path/to/file.go"))
+
+	dv.setFile(makeLargeFileDiff(300), review.New())
+	fullH := lipgloss.Height(dv.viewWithPath("path/to/file.go"))
+
+	want := dv.height + 2 // content height + panel border
+	if shortH != want {
+		t.Fatalf("short diff panel height = %d, want %d", shortH, want)
+	}
+	if fullH != want {
+		t.Fatalf("full diff panel height = %d, want %d", fullH, want)
 	}
 }
 

@@ -32,6 +32,8 @@ type keyMap struct {
 	NextModified   key.Binding
 	PrevModified   key.Binding
 	FirstModified  key.Binding
+	ShrinkPanel    key.Binding
+	GrowPanel      key.Binding
 }
 
 var keys = keyMap{
@@ -64,4 +66,6 @@ var keys = keyMap{
 	NextModified:   key.NewBinding(key.WithKeys("}"), key.WithHelp("}/{", "next/prev modified")),
 	PrevModified:   key.NewBinding(key.WithKeys("{"), key.WithHelp("", "")),
 	FirstModified:  key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "first modified")),
+	ShrinkPanel:    key.NewBinding(key.WithKeys("<"), key.WithHelp("</>", "resize panel")),
+	GrowPanel:      key.NewBinding(key.WithKeys(">"), key.WithHelp("", "")),
 }

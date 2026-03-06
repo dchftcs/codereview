@@ -373,10 +373,11 @@ func (dv *diffView) clampKeepPosition() {
 		dv.cursorY = maxCursor
 	}
 
-	if dv.height <= 0 {
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
 		return
 	}
-	minScroll := int(math.Max(0, float64(dv.cursorY-(dv.height-1))))
+	minScroll := int(math.Max(0, float64(dv.cursorY-(viewportHeight-1))))
 	if dv.scrollY < minScroll {
 		dv.scrollY = minScroll
 	}
@@ -393,12 +394,13 @@ func absInt(n int) int {
 }
 
 func (dv *diffView) scrollCursorIntoMargin() {
-	if dv.height <= 0 {
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
 		return
 	}
 
 	margin := scrollMarginLines
-	maxMargin := (dv.height - 1) / 2
+	maxMargin := (viewportHeight - 1) / 2
 	if margin > maxMargin {
 		margin = maxMargin
 	}
@@ -409,13 +411,13 @@ func (dv *diffView) scrollCursorIntoMargin() {
 	// Keep the cursor away from the viewport edges so scrolling starts
 	// before the cursor reaches the exact top or bottom line.
 	topBoundary := dv.scrollY + margin
-	bottomBoundary := dv.scrollY + dv.height - margin - 1
+	bottomBoundary := dv.scrollY + viewportHeight - margin - 1
 
 	if dv.cursorY < topBoundary {
 		dv.scrollY = dv.cursorY - margin
 	}
 	if dv.cursorY > bottomBoundary {
-		dv.scrollY = dv.cursorY - (dv.height - margin - 1)
+		dv.scrollY = dv.cursorY - (viewportHeight - margin - 1)
 	}
 
 	if dv.scrollY < 0 {
@@ -486,24 +488,44 @@ func (dv *diffView) commentValue() string {
 }
 
 func (dv *diffView) view() string {
+	return dv.viewWithPath("")
+}
+
+func (dv *diffView) viewWithPath(filePath string) string {
 	if dv.file == nil {
 		return diffPanelStyle.Width(dv.width).Height(dv.height).Render("No file selected")
 	}
 
-	if dv.mode == viewUnified {
-		return dv.renderUnified()
+	// Always reserve a line for the file path to keep the layout stable.
+	pathText := " "
+	if filePath != "" {
+		pathText = " " + filePath
 	}
-	return dv.renderSideBySide()
+	pathWidth := dv.width - 4
+	if pathWidth < 1 {
+		pathWidth = 1
+	}
+	pathLine := lipgloss.NewStyle().Foreground(colorDim).Render(truncateToWidth(pathText, pathWidth))
+
+	var content string
+	if dv.mode == viewUnified {
+		content = dv.renderUnifiedContent()
+	} else {
+		content = dv.renderSideBySideContent()
+	}
+
+	return diffPanelStyle.Width(dv.width).Height(dv.height).Render(pathLine + "\n" + content)
 }
 
-func (dv *diffView) renderSideBySide() string {
+func (dv *diffView) renderSideBySideContent() string {
 	colWidth := (dv.width - 4) / 2 // account for border + separator
 	if colWidth < 20 {
 		colWidth = 20
 	}
 
 	var lines []string
-	end := dv.scrollY + dv.height
+	viewportHeight := dv.contentViewportHeight()
+	end := dv.scrollY + viewportHeight
 	if end > len(dv.rows) {
 		end = len(dv.rows)
 	}
@@ -546,8 +568,7 @@ func (dv *diffView) renderSideBySide() string {
 		}
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return diffPanelStyle.Width(dv.width).Height(dv.height).Render(content)
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) string {
@@ -607,9 +628,10 @@ func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) stri
 	return baseStyle.Render(combined)
 }
 
-func (dv *diffView) renderUnified() string {
+func (dv *diffView) renderUnifiedContent() string {
 	var lines []string
-	end := dv.scrollY + dv.height
+	viewportHeight := dv.contentViewportHeight()
+	end := dv.scrollY + viewportHeight
 	if end > len(dv.rows) {
 		end = len(dv.rows)
 	}
@@ -664,8 +686,7 @@ func (dv *diffView) renderUnified() string {
 		}
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return diffPanelStyle.Width(dv.width).Height(dv.height).Render(content)
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
@@ -830,4 +851,11 @@ func bgHex(c lipgloss.TerminalColor) string {
 		return string(lc)
 	}
 	return ""
+}
+
+func (dv *diffView) contentViewportHeight() int {
+	if dv.height <= 1 {
+		return 0
+	}
+	return dv.height - 1
 }

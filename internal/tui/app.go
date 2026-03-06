@@ -75,6 +75,7 @@ type Model struct {
 	mode           mode
 	width          int
 	height         int
+	fileListWidth  int
 	fileList       fileList
 	diffView       diffView
 	bottomBar      bottomBarInput
@@ -109,6 +110,7 @@ func NewModel(cfg Config) Model {
 	dv.highlight = cfg.Highlight
 	m := Model{
 		config:         cfg,
+		fileListWidth:  30,
 		review:         review.New(),
 		diffView:       dv,
 		bottomBar:      newBottomBarInput(),
@@ -481,13 +483,25 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setDiffViewForSelection(false)
 
 	case key.Matches(msg, keys.ToggleTreeDir):
-		if m.fileList.isTreeMode() {
-			if err := m.fileList.toggleTreeExpand(); err != nil {
-				m.err = err
-				return m, nil
-			}
-			m.setDiffViewForSelection(false)
+		if err := m.fileList.toggleTreeExpand(); err != nil {
+			m.err = err
+			return m, nil
 		}
+		m.setDiffViewForSelection(false)
+
+	case key.Matches(msg, keys.ShrinkPanel):
+		m.fileListWidth -= 5
+		if m.fileListWidth < 15 {
+			m.fileListWidth = 15
+		}
+		m.updateLayout()
+	case key.Matches(msg, keys.GrowPanel):
+		maxW := m.width / 2
+		m.fileListWidth += 5
+		if m.fileListWidth > maxW {
+			m.fileListWidth = maxW
+		}
+		m.updateLayout()
 
 	case key.Matches(msg, keys.NextCommit):
 		if cmd := m.navigateCommit(1); cmd != nil {
@@ -869,8 +883,9 @@ func (m Model) helpView() string {
 		{"] / [", "Next / previous file"},
 		{"} / {", "Next / previous modified file"},
 		{"M", "Jump to first modified file"},
-		{"t", "Toggle changed files / full tree"},
+		{"t", "Toggle changed / all files"},
 		{"o", "Open/close selected directory"},
+		{"< / >", "Shrink / grow file panel"},
 		{"h / l / ← / →", "Previous / next commit"},
 		{"c", "Add inline comment at cursor"},
 		{"R", "Add general comment"},
@@ -949,7 +964,6 @@ func (m *Model) updateLayout() {
 // updateLayoutWithChrome computes panel sizes given extra chrome lines
 // (e.g. bottom bar) beyond header/footer/borders.
 func (m *Model) updateLayoutWithChrome(extraLines int) {
-	fileListWidth := 20
 	// Measure actual header + footer heights to handle text wrapping on
 	// narrow terminals. Panel borders add 2 lines (top + bottom).
 	headerH := lipgloss.Height(m.renderHeader())
@@ -960,7 +974,7 @@ func (m *Model) updateLayoutWithChrome(extraLines int) {
 		contentHeight = minContentHeight
 	}
 	m.fileList.height = contentHeight
-	m.diffView.width = m.width - fileListWidth - 2
+	m.diffView.width = m.width - m.fileListWidth - 2
 	m.diffView.height = contentHeight
 	m.diffView.clampScroll()
 }
@@ -977,7 +991,31 @@ func (m Model) renderHeader() string {
 	} else {
 		headerText = fmt.Sprintf(" [diff] %s", m.config.RevSpec)
 	}
-	return headerStyle.Width(m.width).Render(headerText)
+	w := m.width
+	if w < 3 {
+		w = 3
+	}
+	return headerStyle.Width(w).Height(1).Render(truncateToWidth(headerText, w-2))
+}
+
+func truncateToWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	if maxWidth == 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > maxWidth-1 {
+		runes = runes[:len(runes)-1]
+	}
+	if len(runes) == 0 {
+		return "…"
+	}
+	return string(runes) + "…"
 }
 
 func (m Model) renderFooter() string {
@@ -988,20 +1026,20 @@ func (m Model) renderFooter() string {
 	filePos, fileTotal := m.fileList.counts()
 	fileCount := fmt.Sprintf("%d/%d files", filePos, fileTotal)
 	fileMode := "changed"
-	if m.fileList.isTreeMode() {
-		fileMode = "tree"
+	if m.fileList.mode == fileListModeFullTree {
+		fileMode = "all"
 	}
 	commentCount := fmt.Sprintf("%d comments", len(m.review.Comments))
-	footerPrimary := footerStyle.Width(m.width).Render(
-		fmt.Sprintf(" `j/k`move `gg/G`top/bot `/`search `n/N`next/prev `c`line-comment `R`general-comment `d/E`delete/edit-comment `tab`%s `e`full-context `s`save `q`quit `?`help",
+	footerPrimary := footerStyle.MaxWidth(m.width).Render(
+		fmt.Sprintf(" `j/k`move `gg/G`top/bot `/`search `n/N`next/prev `c`comment `R`general `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
 			modeStr))
 	dividerWidth := m.width
 	if dividerWidth < 1 {
 		dividerWidth = 1
 	}
-	footerDivider := footerStyle.Width(m.width).Render(strings.Repeat("─", dividerWidth))
-	footerNav := footerStyle.Width(m.width).Render(
-		fmt.Sprintf(" file-nav: `f`find-name `p`find-text `]/[`next/prev-file `}/{`next/prev-mod `M`first-mod `t`toggle-tree `o`toggle-dir  [%s] %s  %s",
+	footerDivider := footerStyle.MaxWidth(m.width).Render(strings.Repeat("─", dividerWidth))
+	footerNav := footerStyle.MaxWidth(m.width).Render(
+		fmt.Sprintf(" `f`find `p`content `]/[`next/prev `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
 			fileMode, fileCount, commentCount))
 	return lipgloss.JoinVertical(lipgloss.Left, footerPrimary, footerDivider, footerNav)
 }
@@ -1031,9 +1069,8 @@ func (m Model) View() string {
 	m.updateLayoutWithChrome(extraLines)
 
 	// Body
-	fileListWidth := 20
-	fl := m.fileList.view(fileListWidth)
-	dv := m.diffView.view()
+	fl := m.fileList.view(m.fileListWidth)
+	dv := m.diffView.viewWithPath(m.fileList.selectedDiffPath())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, fl, dv)
 
 	if hasBottomBar {

@@ -16,8 +16,8 @@ import (
 type fileListMode int
 
 const (
-	fileListModeModified fileListMode = iota
-	fileListModeTree
+	fileListModeModifiedTree fileListMode = iota
+	fileListModeFullTree
 )
 
 type treeNode struct {
@@ -43,7 +43,8 @@ type fileList struct {
 	mode          fileListMode
 	repoRoot      string
 	modifiedIndex map[string]int
-	root          *treeNode
+	root          *treeNode         // full filesystem tree root
+	modifiedRoot  *treeNode         // modified-only tree root
 	treeRows      []treeRow
 	treeSelected  int
 	treeOffset    int
@@ -56,7 +57,7 @@ func newFileList(files []diff.FileDiff) fileList {
 	}
 	fl := fileList{
 		files:         files,
-		mode:          fileListModeModified,
+		mode:          fileListModeModifiedTree,
 		repoRoot:      root,
 		modifiedIndex: make(map[string]int, len(files)),
 		root: &treeNode{
@@ -69,11 +70,12 @@ func newFileList(files []diff.FileDiff) fileList {
 	for i := range files {
 		fl.modifiedIndex[fl.filePathForIndex(i)] = i
 	}
+	fl.buildModifiedTree()
 	return fl
 }
 
 func (fl *fileList) isTreeMode() bool {
-	return fl.mode == fileListModeTree
+	return fl.mode == fileListModeModifiedTree || fl.mode == fileListModeFullTree
 }
 
 func (fl *fileList) filePathForIndex(i int) string {
@@ -102,9 +104,74 @@ func (fl *fileList) modifiedFileAtPath(path string) (*diff.FileDiff, int, bool) 
 	return &fl.files[idx], idx, true
 }
 
+func (fl *fileList) buildModifiedTree() {
+	// Build a tree from modified file paths only (no filesystem reads).
+	modRoot := &treeNode{
+		name:     filepath.Base(fl.repoRoot),
+		absPath:  fl.repoRoot,
+		isDir:    true,
+		expanded: true,
+		loaded:   true,
+	}
+
+	for i := range fl.files {
+		path := fl.filePathForIndex(i)
+		if path == "" {
+			continue
+		}
+		parts := strings.Split(path, "/")
+		curr := modRoot
+		for pi, part := range parts {
+			isLast := pi == len(parts)-1
+			// Find existing child
+			var child *treeNode
+			for _, c := range curr.children {
+				if c.name == part {
+					child = c
+					break
+				}
+			}
+			if child == nil {
+				child = &treeNode{
+					name:     part,
+					absPath:  filepath.Join(curr.absPath, part),
+					isDir:    !isLast,
+					expanded: true,
+					loaded:   true,
+				}
+				curr.children = append(curr.children, child)
+			}
+			curr = child
+		}
+	}
+
+	// Sort children: dirs first, then alphabetical
+	var sortTree func(node *treeNode)
+	sortTree = func(node *treeNode) {
+		sort.Slice(node.children, func(i, j int) bool {
+			if node.children[i].isDir != node.children[j].isDir {
+				return node.children[i].isDir
+			}
+			return strings.ToLower(node.children[i].name) < strings.ToLower(node.children[j].name)
+		})
+		for _, c := range node.children {
+			if c.isDir {
+				sortTree(c)
+			}
+		}
+	}
+	sortTree(modRoot)
+
+	fl.modifiedRoot = modRoot
+	fl.rebuildTreeRows()
+	if len(fl.treeRows) > 0 {
+		fl.firstModified()
+	}
+}
+
 func (fl *fileList) toggleMode() error {
-	if fl.mode == fileListModeModified {
-		fl.mode = fileListModeTree
+	if fl.mode == fileListModeModifiedTree {
+		fl.mode = fileListModeFullTree
 		if err := fl.ensureNodeLoaded(fl.root); err != nil {
 			return err
 		}
@@ -113,8 +180,10 @@ func (fl *fileList) toggleMode() error {
 		fl.ensureTreeVisible()
 		return nil
 	}
-	fl.mode = fileListModeModified
-	fl.ensureVisible()
+	fl.mode = fileListModeModifiedTree
+	fl.rebuildTreeRows()
+	fl.selectTreePath(fl.selectedDiffPath())
+	fl.ensureTreeVisible()
 	return nil
 }
 
@@ -153,9 +222,17 @@ func (fl *fileList) ensureNodeLoaded(node *treeNode) error {
 	return nil
 }
 
+func (fl *fileList) activeRoot() *treeNode {
+	if fl.mode == fileListModeModifiedTree && fl.modifiedRoot != nil {
+		return fl.modifiedRoot
+	}
+	return fl.root
+}
+
 func (fl *fileList) rebuildTreeRows() {
 	fl.treeRows = nil
-	if fl.root == nil {
+	root := fl.activeRoot()
+	if root == nil {
 		return
 	}
 	var walk func(node *treeNode, depth int)
@@ -167,7 +244,7 @@ func (fl *fileList) rebuildTreeRows() {
 			}
 		}
 	}
-	walk(fl.root, 0)
+	walk(root, 0)
 	if fl.treeSelected >= len(fl.treeRows) {
 		fl.treeSelected = len(fl.treeRows) - 1
 	}
@@ -240,9 +317,6 @@ func (fl *fileList) toggleTreeExpand() error {
 }
 
 func (fl *fileList) selectionStateKey() string {
-	if !fl.isTreeMode() {
-		return "diff:" + fl.selectedDiffPath()
-	}
 	path, _, ok := fl.selectedTreePath()
 	if !ok {
 		return "tree:"
@@ -251,41 +325,26 @@ func (fl *fileList) selectionStateKey() string {
 }
 
 func (fl *fileList) modifiedSelection() (path string, idx int, ok bool) {
-	if fl.isTreeMode() {
-		p, isDir, exists := fl.selectedTreePath()
-		if !exists || isDir {
-			return "", -1, false
-		}
-		i, exists := fl.modifiedIndex[p]
-		if !exists {
-			return "", -1, false
-		}
-		return p, i, true
-	}
-	if len(fl.files) == 0 {
+	p, isDir, exists := fl.selectedTreePath()
+	if !exists || isDir {
 		return "", -1, false
 	}
-	return fl.selectedDiffPath(), fl.selected, true
+	i, exists := fl.modifiedIndex[p]
+	if !exists {
+		return "", -1, false
+	}
+	return p, i, true
 }
 
 func (fl *fileList) refSelection() (path string, isDir bool, ok bool) {
-	if !fl.isTreeMode() {
-		return "", false, false
-	}
 	return fl.selectedTreePath()
 }
 
 func (fl *fileList) counts() (int, int) {
-	if fl.isTreeMode() {
-		if len(fl.treeRows) == 0 {
-			return 0, 0
-		}
-		return fl.treeSelected + 1, len(fl.treeRows)
-	}
-	if len(fl.files) == 0 {
+	if len(fl.treeRows) == 0 {
 		return 0, 0
 	}
-	return fl.selected + 1, len(fl.files)
+	return fl.treeSelected + 1, len(fl.treeRows)
 }
 
 func (fl *fileList) search(term string) (bool, error) {
@@ -293,12 +352,14 @@ func (fl *fileList) search(term string) (bool, error) {
 	if needle == "" {
 		return false, nil
 	}
-	if !fl.isTreeMode() {
-		return fl.searchModifiedList(needle), nil
-	}
 
 	if fl.searchTreeRows(needle) {
 		return true, nil
+	}
+
+	// In modified-only tree mode, don't walk the filesystem
+	if fl.mode == fileListModeModifiedTree {
+		return false, nil
 	}
 
 	var matched string
@@ -335,22 +396,6 @@ func (fl *fileList) search(term string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func (fl *fileList) searchModifiedList(needle string) bool {
-	if len(fl.files) == 0 {
-		return false
-	}
-	start := (fl.selected + 1) % len(fl.files)
-	bestIdx, ok := bestPathMatchFrom(start, len(fl.files), func(i int) string {
-		return fl.filePathForIndex(i)
-	}, needle)
-	if !ok {
-		return false
-	}
-	fl.selected = bestIdx
-	fl.ensureVisible()
-	return true
 }
 
 func (fl *fileList) searchContent(term string) (string, bool, error) {
@@ -455,14 +500,13 @@ func (fl *fileList) focusPath(path string) error {
 	if _, idx, ok := fl.modifiedFileAtPath(path); ok {
 		fl.selected = idx
 		fl.ensureVisible()
-		if fl.isTreeMode() {
-			if err := fl.revealTreePath(path); err != nil {
-				return err
-			}
+		if err := fl.revealTreePath(path); err != nil {
+			return err
 		}
 		return nil
 	}
-	if !fl.isTreeMode() {
+	// If not a modified file, switch to full tree to find it
+	if fl.mode != fileListModeFullTree {
 		if err := fl.toggleMode(); err != nil {
 			return err
 		}
@@ -526,9 +570,6 @@ func (fl *fileList) nextModified() bool {
 	if len(fl.files) == 0 {
 		return false
 	}
-	if !fl.isTreeMode() {
-		return fl.nextModifiedList()
-	}
 	for i := fl.treeSelected + 1; i < len(fl.treeRows); i++ {
 		path := fl.treePath(fl.treeRows[i].node)
 		if _, ok := fl.modifiedIndex[path]; ok && !fl.treeRows[i].node.isDir {
@@ -544,9 +585,6 @@ func (fl *fileList) nextModified() bool {
 func (fl *fileList) prevModified() bool {
 	if len(fl.files) == 0 {
 		return false
-	}
-	if !fl.isTreeMode() {
-		return fl.prevModifiedList()
 	}
 	for i := fl.treeSelected - 1; i >= 0; i-- {
 		path := fl.treePath(fl.treeRows[i].node)
@@ -564,11 +602,6 @@ func (fl *fileList) firstModified() bool {
 	if len(fl.files) == 0 {
 		return false
 	}
-	if !fl.isTreeMode() {
-		fl.selected = 0
-		fl.ensureVisible()
-		return true
-	}
 	for i := 0; i < len(fl.treeRows); i++ {
 		path := fl.treePath(fl.treeRows[i].node)
 		if _, ok := fl.modifiedIndex[path]; ok && !fl.treeRows[i].node.isDir {
@@ -577,24 +610,6 @@ func (fl *fileList) firstModified() bool {
 			fl.ensureTreeVisible()
 			return true
 		}
-	}
-	return false
-}
-
-func (fl *fileList) nextModifiedList() bool {
-	if fl.selected < len(fl.files)-1 {
-		fl.selected++
-		fl.ensureVisible()
-		return true
-	}
-	return false
-}
-
-func (fl *fileList) prevModifiedList() bool {
-	if fl.selected > 0 {
-		fl.selected--
-		fl.ensureVisible()
-		return true
 	}
 	return false
 }
@@ -632,33 +647,45 @@ func (fl *fileList) revealTreePath(path string) error {
 }
 
 func (fl *fileList) next() {
-	if fl.isTreeMode() {
-		if fl.treeSelected < len(fl.treeRows)-1 {
-			fl.treeSelected++
-			fl.syncModifiedSelectionFromTree()
-			fl.ensureTreeVisible()
+	if fl.treeSelected >= len(fl.treeRows)-1 {
+		return
+	}
+	// In modified-only tree, skip directories (they're just structural)
+	if fl.mode == fileListModeModifiedTree {
+		for i := fl.treeSelected + 1; i < len(fl.treeRows); i++ {
+			if !fl.treeRows[i].node.isDir {
+				fl.treeSelected = i
+				fl.syncModifiedSelectionFromTree()
+				fl.ensureTreeVisible()
+				return
+			}
 		}
 		return
 	}
-	if fl.selected < len(fl.files)-1 {
-		fl.selected++
-		fl.ensureVisible()
-	}
+	fl.treeSelected++
+	fl.syncModifiedSelectionFromTree()
+	fl.ensureTreeVisible()
 }
 
 func (fl *fileList) prev() {
-	if fl.isTreeMode() {
-		if fl.treeSelected > 0 {
-			fl.treeSelected--
-			fl.syncModifiedSelectionFromTree()
-			fl.ensureTreeVisible()
+	if fl.treeSelected <= 0 {
+		return
+	}
+	// In modified-only tree, skip directories (they're just structural)
+	if fl.mode == fileListModeModifiedTree {
+		for i := fl.treeSelected - 1; i >= 0; i-- {
+			if !fl.treeRows[i].node.isDir {
+				fl.treeSelected = i
+				fl.syncModifiedSelectionFromTree()
+				fl.ensureTreeVisible()
+				return
+			}
 		}
 		return
 	}
-	if fl.selected > 0 {
-		fl.selected--
-		fl.ensureVisible()
-	}
+	fl.treeSelected--
+	fl.syncModifiedSelectionFromTree()
+	fl.ensureTreeVisible()
 }
 
 func (fl *fileList) ensureVisible() {
@@ -693,89 +720,7 @@ func (fl *fileList) selectedFile() *diff.FileDiff {
 }
 
 func (fl *fileList) view(width int) string {
-	if fl.isTreeMode() {
-		return fl.viewTree(width)
-	}
-	return fl.viewModified(width)
-}
-
-func (fl *fileList) viewModified(width int) string {
-	if len(fl.files) == 0 {
-		return fileListStyle.Width(width).Height(fl.height).Render("No files")
-	}
-
-	maxW := width - 2 // content width inside border+padding
-	if maxW < 1 {
-		maxW = 1
-	}
-
-	var lines []string
-	end := fl.offset + fl.height
-	if end > len(fl.files) {
-		end = len(fl.files)
-	}
-
-	for i := fl.offset; i < end; i++ {
-		f := fl.files[i]
-		fname := f.NewName
-		if fname == "/dev/null" {
-			fname = f.OldName
-		}
-
-		// Count changes
-		adds, dels := 0, 0
-		for _, h := range f.Hunks {
-			for _, l := range h.Lines {
-				switch l.Op {
-				case diff.OpInsert:
-					adds++
-				case diff.OpDelete:
-					dels++
-				}
-			}
-		}
-
-		indicator := "M"
-		if f.OldName == "/dev/null" {
-			indicator = "A"
-		} else if f.NewName == "/dev/null" {
-			indicator = "D"
-		}
-
-		stat := fmt.Sprintf(" +%d -%d", adds, dels)
-
-		commentMarker := ""
-		cmLen := 0
-		if fl.review != nil {
-			if cc := fl.review.CommentsForFile(fname); len(cc) > 0 {
-				commentMarker = fmt.Sprintf(" [%d]", len(cc))
-				cmLen = len(commentMarker)
-			}
-		}
-
-		// Truncate name so indicator + name + stat + marker fits in one line
-		prefix := indicator + " "
-		nameBudget := maxW - len(prefix) - len(stat) - cmLen
-		name := shortenPath(fname, nameBudget)
-		if len(name) > nameBudget && nameBudget > 0 {
-			name = name[:nameBudget]
-		}
-
-		label := prefix + name + stat
-		if commentMarker != "" {
-			label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
-		}
-
-		if i == fl.selected {
-			label = selectedFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
-		} else {
-			label = normalFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
-		}
-		lines = append(lines, label)
-	}
-
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return fileListStyle.Width(width).Height(fl.height).Render(content)
+	return fl.viewTree(width)
 }
 
 func (fl *fileList) viewTree(width int) string {
@@ -798,7 +743,7 @@ func (fl *fileList) viewTree(width int) string {
 		row := fl.treeRows[i]
 		indent := strings.Repeat("  ", row.depth)
 		name := row.node.name
-		prefix := "- "
+		prefix := "  "
 		if row.node.isDir {
 			name += "/"
 			if row.node.expanded {
@@ -808,27 +753,51 @@ func (fl *fileList) viewTree(width int) string {
 			}
 		}
 		rel := fl.treePath(row.node)
+		modIdx := -1
 		modified := false
-		if _, ok := fl.modifiedIndex[rel]; ok && !row.node.isDir {
+		if idx, ok := fl.modifiedIndex[rel]; ok && !row.node.isDir {
 			modified = true
+			modIdx = idx
+		}
+
+		// Build stat suffix for modified files
+		stat := ""
+		if modified && modIdx >= 0 && modIdx < len(fl.files) {
+			adds, dels := 0, 0
+			for _, h := range fl.files[modIdx].Hunks {
+				for _, l := range h.Lines {
+					switch l.Op {
+					case diff.OpInsert:
+						adds++
+					case diff.OpDelete:
+						dels++
+					}
+				}
+			}
+			stat = fmt.Sprintf(" +%d -%d", adds, dels)
+		}
+
+		commentMarker := ""
+		if fl.review != nil && modified {
+			if cc := fl.review.CommentsForFile(rel); len(cc) > 0 {
+				commentMarker = fmt.Sprintf(" [%d]", len(cc))
+			}
 		}
 
 		// "* " or "  " prefix takes 2 chars
-		labelBudget := maxW - 2
+		labelBudget := maxW - 2 - len(stat) - len(commentMarker)
 		label := indent + prefix + name
 		if len(label) > labelBudget && labelBudget > 0 {
 			label = label[:labelBudget]
 		}
 
 		if modified {
-			label = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("* " + label)
+			label = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("* "+label) + stat
 		} else {
 			label = "  " + label
 		}
-		if fl.review != nil && modified {
-			if cc := fl.review.CommentsForFile(rel); len(cc) > 0 {
-				label += lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf(" [%d]", len(cc)))
-			}
+		if commentMarker != "" {
+			label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
 		}
 
 		if i == fl.treeSelected {

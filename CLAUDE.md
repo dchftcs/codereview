@@ -14,7 +14,11 @@ go vet ./...                 # lint
 
 Requires Go 1.25+.
 
-No test suite yet. Manual testing against real git repos.
+Tests:
+
+```bash
+go test ./...
+```
 
 ## Architecture
 
@@ -44,6 +48,7 @@ internal/
 - **Side-by-side alignment**: `alignPairs()` in `parser.go` pairs consecutive delete+insert sequences. Unpaired deletes/inserts get `nil` on the other side.
 - **ANSI-aware truncation**: `truncate()` uses `lipgloss.Width()` to measure visible width. Falls back to stripped text when truncation is needed (loses highlighting on that line but avoids garbled escape sequences).
 - **Per-file state preservation**: `fileStates map[int]fileState` on `Model` saves/restores scroll, cursor, and comment input state per file index. `expandedSet map[int]bool` tracks expand mode per file. State is saved before switching files (`]`/`[`) and restored on return. Both maps are reset on commit navigation.
+- **Expand/collapse stability invariant**: toggling `e` must preserve both (1) the anchored diff row identity (not just a raw line number) and (2) the cursor's on-screen row when feasible. Keep-position transitions should not apply normal scroll-margin nudging.
 
 ## Conventions
 
@@ -59,5 +64,6 @@ internal/
 - `buildRows()` must be called after any comment add/delete to refresh the flattened row list. `restoreState()` calls it internally.
 - `fileStates` and `expandedSet` must be reset (re-initialized) when switching commits, since the file list changes entirely.
 - `clampScroll()` is called from `updateLayout()` — if you add new places that change layout or row count, ensure it's called there too.
+- For expand/collapse transitions, use the keep-position path and keep-position clamping (not the normal margin-enforcing scroll path), or you'll regress stable-location behavior.
 - Inline comment input lives in `diffView` (not the bottom bar). The bottom bar (`bottomBarInput`) is only for general comments.
 - `GeneralComments` is a `[]string` (not a single string). The formatter renders all of them.

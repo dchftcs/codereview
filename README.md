@@ -49,10 +49,16 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `d` | Delete comment at cursor line |
 | `E` | Edit comment at cursor line |
 | `Tab` | Toggle side-by-side / unified view |
-| `e` | Toggle full file context (expand) |
+| `e` | Toggle full file context (expand), preserving cursor anchor and screen row |
 | `s` | Save review and exit (prompts for filename in default no-arg flow) |
 | `?` | Show help screen |
 | `q` / `Ctrl+c` | Quit (prompts if review has unsaved comments) |
+
+## Navigation Guarantees
+
+- File navigation (`]` / `[`) restores per-file cursor/scroll/comment-input state.
+- Expand/collapse (`e`) keeps the cursor anchored to the same logical diff row identity.
+- Expand/collapse (`e`) keeps the cursor on the same on-screen row when feasible.
 
 ## Output
 

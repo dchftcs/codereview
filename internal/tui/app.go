@@ -943,8 +943,19 @@ func (m *Model) navigateCommit(delta int) tea.Cmd {
 }
 
 func (m *Model) updateLayout() {
+	m.updateLayoutWithChrome(0)
+}
+
+// updateLayoutWithChrome computes panel sizes given extra chrome lines
+// (e.g. bottom bar) beyond header/footer/borders.
+func (m *Model) updateLayoutWithChrome(extraLines int) {
 	fileListWidth := 20
-	contentHeight := m.height - 4 // header + footer
+	// Measure actual header + footer heights to handle text wrapping on
+	// narrow terminals. Panel borders add 2 lines (top + bottom).
+	headerH := lipgloss.Height(m.renderHeader())
+	footerH := lipgloss.Height(m.renderFooter())
+	const panelBorderH = 2
+	contentHeight := m.height - headerH - footerH - panelBorderH - extraLines
 	if contentHeight < minContentHeight {
 		contentHeight = minContentHeight
 	}
@@ -954,15 +965,7 @@ func (m *Model) updateLayout() {
 	m.diffView.clampScroll()
 }
 
-func (m Model) View() string {
-	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
-	}
-	if m.quitting {
-		return ""
-	}
-
-	// Header
+func (m Model) renderHeader() string {
 	headerText := " cr"
 	if len(m.commits) > 0 && m.commitIdx < len(m.commits) {
 		c := m.commits[m.commitIdx]
@@ -974,9 +977,10 @@ func (m Model) View() string {
 	} else {
 		headerText = fmt.Sprintf(" [diff] %s", m.config.RevSpec)
 	}
-	header := headerStyle.Width(m.width).Render(headerText)
+	return headerStyle.Width(m.width).Render(headerText)
+}
 
-	// Footer
+func (m Model) renderFooter() string {
 	modeStr := "side-by-side"
 	if m.diffView.mode == viewUnified {
 		modeStr = "unified"
@@ -999,12 +1003,32 @@ func (m Model) View() string {
 	footerNav := footerStyle.Width(m.width).Render(
 		fmt.Sprintf(" file-nav: `f`find-name `p`find-text `]/[`next/prev-file `}/{`next/prev-mod `M`first-mod `t`toggle-tree `o`toggle-dir  [%s] %s  %s",
 			fileMode, fileCount, commentCount))
-	footer := lipgloss.JoinVertical(lipgloss.Left, footerPrimary, footerDivider, footerNav)
+	return lipgloss.JoinVertical(lipgloss.Left, footerPrimary, footerDivider, footerNav)
+}
+
+func (m Model) View() string {
+	if m.err != nil {
+		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
+	}
+	if m.quitting {
+		return ""
+	}
+
+	header := m.renderHeader()
+	footer := m.renderFooter()
 
 	// Help overlay
 	if m.mode == modeHelp {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.helpView(), footer)
 	}
+
+	// Recompute panel heights to match actual chrome (handles footer wrapping)
+	hasBottomBar := m.mode == modeGeneralComment || m.mode == modeSearch || m.mode == modeFileSearch || m.mode == modeContentSearch || m.mode == modeSaveAs || m.mode == modeQuitConfirm
+	extraLines := 0
+	if hasBottomBar {
+		extraLines = lipgloss.Height(m.bottomBar.view())
+	}
+	m.updateLayoutWithChrome(extraLines)
 
 	// Body
 	fileListWidth := 20
@@ -1012,8 +1036,7 @@ func (m Model) View() string {
 	dv := m.diffView.view()
 	body := lipgloss.JoinHorizontal(lipgloss.Top, fl, dv)
 
-	// Bottom bar input (general comment or search)
-	if m.mode == modeGeneralComment || m.mode == modeSearch || m.mode == modeFileSearch || m.mode == modeContentSearch || m.mode == modeSaveAs || m.mode == modeQuitConfirm {
+	if hasBottomBar {
 		return lipgloss.JoinVertical(lipgloss.Left, header, body, m.bottomBar.view(), footer)
 	}
 

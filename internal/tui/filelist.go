@@ -701,7 +701,12 @@ func (fl *fileList) view(width int) string {
 
 func (fl *fileList) viewModified(width int) string {
 	if len(fl.files) == 0 {
-		return "No files"
+		return fileListStyle.Width(width).Height(fl.height).Render("No files")
+	}
+
+	maxW := width - 2 // content width inside border+padding
+	if maxW < 1 {
+		maxW = 1
 	}
 
 	var lines []string
@@ -712,9 +717,9 @@ func (fl *fileList) viewModified(width int) string {
 
 	for i := fl.offset; i < end; i++ {
 		f := fl.files[i]
-		name := shortenPath(f.NewName, width-12)
-		if f.NewName == "/dev/null" {
-			name = shortenPath(f.OldName, width-12)
+		fname := f.NewName
+		if fname == "/dev/null" {
+			fname = f.OldName
 		}
 
 		// Count changes
@@ -740,22 +745,31 @@ func (fl *fileList) viewModified(width int) string {
 		stat := fmt.Sprintf(" +%d -%d", adds, dels)
 
 		commentMarker := ""
+		cmLen := 0
 		if fl.review != nil {
-			fname := f.NewName
-			if fname == "/dev/null" {
-				fname = f.OldName
-			}
 			if cc := fl.review.CommentsForFile(fname); len(cc) > 0 {
-				commentMarker = lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf(" [%d]", len(cc)))
+				commentMarker = fmt.Sprintf(" [%d]", len(cc))
+				cmLen = len(commentMarker)
 			}
 		}
 
-		label := fmt.Sprintf("%s %s%s", indicator, name, stat) + commentMarker
+		// Truncate name so indicator + name + stat + marker fits in one line
+		prefix := indicator + " "
+		nameBudget := maxW - len(prefix) - len(stat) - cmLen
+		name := shortenPath(fname, nameBudget)
+		if len(name) > nameBudget && nameBudget > 0 {
+			name = name[:nameBudget]
+		}
+
+		label := prefix + name + stat
+		if commentMarker != "" {
+			label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
+		}
 
 		if i == fl.selected {
-			label = selectedFileStyle.Width(width - 2).Render(label)
+			label = selectedFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
 		} else {
-			label = normalFileStyle.Width(width - 2).Render(label)
+			label = normalFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
 		}
 		lines = append(lines, label)
 	}
@@ -767,6 +781,11 @@ func (fl *fileList) viewModified(width int) string {
 func (fl *fileList) viewTree(width int) string {
 	if len(fl.treeRows) == 0 {
 		return fileListStyle.Width(width).Height(fl.height).Render("No files")
+	}
+
+	maxW := width - 2
+	if maxW < 1 {
+		maxW = 1
 	}
 
 	var lines []string
@@ -793,8 +812,14 @@ func (fl *fileList) viewTree(width int) string {
 		if _, ok := fl.modifiedIndex[rel]; ok && !row.node.isDir {
 			modified = true
 		}
+
+		// "* " or "  " prefix takes 2 chars
+		labelBudget := maxW - 2
 		label := indent + prefix + name
-		label = shortenPath(label, width-4)
+		if len(label) > labelBudget && labelBudget > 0 {
+			label = label[:labelBudget]
+		}
+
 		if modified {
 			label = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("* " + label)
 		} else {
@@ -807,9 +832,9 @@ func (fl *fileList) viewTree(width int) string {
 		}
 
 		if i == fl.treeSelected {
-			label = selectedFileStyle.Width(width - 2).Render(label)
+			label = selectedFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
 		} else {
-			label = normalFileStyle.Width(width - 2).Render(label)
+			label = normalFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
 		}
 		lines = append(lines, label)
 	}

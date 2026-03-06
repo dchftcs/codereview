@@ -287,6 +287,38 @@ func (dv *diffView) moveCursorTo(row int) {
 	dv.scrollCursorIntoMargin()
 }
 
+// moveCursorToViewportTop moves the cursor to the top visible row.
+func (dv *diffView) moveCursorToViewportTop() {
+	if len(dv.rows) == 0 {
+		return
+	}
+	dv.cursorY = dv.scrollY
+	if dv.cursorY < 0 {
+		dv.cursorY = 0
+	}
+	if dv.cursorY >= len(dv.rows) {
+		dv.cursorY = len(dv.rows) - 1
+	}
+}
+
+// moveCursorToViewportBottom moves the cursor to the bottom visible row.
+func (dv *diffView) moveCursorToViewportBottom() {
+	if len(dv.rows) == 0 {
+		return
+	}
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
+		viewportHeight = 1
+	}
+	dv.cursorY = dv.scrollY + viewportHeight - 1
+	if dv.cursorY < 0 {
+		dv.cursorY = 0
+	}
+	if dv.cursorY >= len(dv.rows) {
+		dv.cursorY = len(dv.rows) - 1
+	}
+}
+
 // findMatches returns row indices whose line content matches the search term (case-insensitive).
 func (dv *diffView) findMatches(term string) []int {
 	if term == "" {

@@ -35,8 +35,10 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `j` / `k` (Vim) | Move cursor up/down |
 | `↑` / `↓` | Move cursor up/down |
 | `[count]j` / `[count]k` | Move by count (e.g. `9j`) |
+| `H` / `L` | Move cursor to top / bottom visible line (screen-relative) |
 | `gg` / `G` | Go to top / bottom |
 | `[count]gg` / `[count]G` | Go to line number |
+| `PgDn` / `PgUp` | Page down/up by one visible viewport height |
 | `Ctrl+d` / `Ctrl+u` | Half page down/up |
 | `/` | Search in diff |
 | `n` / `N` | Next / previous search match |
@@ -53,6 +55,8 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `s` | Save review and exit (prompts for filename in default no-arg flow) |
 | `?` | Show help screen |
 | `q` / `Ctrl+c` | Quit (prompts if review has unsaved comments) |
+
+Use `H`/`L` when you want screen-relative jumps (top/bottom visible row) to quickly start scrolling from the current viewport edge. `PgDn`/`PgUp` move by exactly one visible viewport height. `gg`/`G` remain full-diff jumps (first/last row).
 
 ## Navigation Guarantees
 

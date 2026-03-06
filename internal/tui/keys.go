@@ -5,6 +5,8 @@ import "github.com/charmbracelet/bubbles/key"
 type keyMap struct {
 	Up             key.Binding
 	Down           key.Binding
+	ScreenTop      key.Binding
+	ScreenBottom   key.Binding
 	NextFile       key.Binding
 	PrevFile       key.Binding
 	NextCommit     key.Binding
@@ -19,6 +21,8 @@ type keyMap struct {
 	DeleteComment  key.Binding
 	EditComment    key.Binding
 	GeneralComment key.Binding
+	FullPageDown   key.Binding
+	FullPageUp     key.Binding
 	HalfPageDown   key.Binding
 	HalfPageUp     key.Binding
 	Help           key.Binding
@@ -39,6 +43,8 @@ type keyMap struct {
 var keys = keyMap{
 	Up:             key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("j/k", "scroll")),
 	Down:           key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("", "")),
+	ScreenTop:      key.NewBinding(key.WithKeys("H"), key.WithHelp("H/L", "screen top/bot")),
+	ScreenBottom:   key.NewBinding(key.WithKeys("L"), key.WithHelp("", "")),
 	NextFile:       key.NewBinding(key.WithKeys("]"), key.WithHelp("]/[", "next/prev file")),
 	PrevFile:       key.NewBinding(key.WithKeys("["), key.WithHelp("", "")),
 	NextCommit:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("h/l", "prev/next commit")),
@@ -53,6 +59,8 @@ var keys = keyMap{
 	DeleteComment:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete comment")),
 	EditComment:    key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit comment")),
 	GeneralComment: key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "general comment")),
+	FullPageDown:   key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn/up", "page down/up")),
+	FullPageUp:     key.NewBinding(key.WithKeys("pgup"), key.WithHelp("", "")),
 	HalfPageDown:   key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
 	HalfPageUp:     key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
 	Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),

@@ -92,6 +92,42 @@ func TestInlineCommentModeSubmitAndCancel(t *testing.T) {
 	}
 }
 
+func TestViewportRelativeNavigationKeys(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.height = 12
+	m.diffView.setFile(makeLargeFileDiff(80), m.review)
+	m.diffView.scrollY = 20
+	m.diffView.cursorY = 25
+	viewport := m.diffView.contentViewportHeight()
+
+	m = pressKey(m, keyRunes("H"))
+	if m.diffView.cursorY != 20 {
+		t.Fatalf("cursor after H = %d, want 20 (top visible row)", m.diffView.cursorY)
+	}
+
+	m = pressKey(m, keyRunes("L"))
+	wantBottom := 20 + m.diffView.contentViewportHeight() - 1
+	if wantBottom >= len(m.diffView.rows) {
+		wantBottom = len(m.diffView.rows) - 1
+	}
+	if m.diffView.cursorY != wantBottom {
+		t.Fatalf("cursor after L = %d, want %d (bottom visible row)", m.diffView.cursorY, wantBottom)
+	}
+
+	m.diffView.cursorY = 20
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.diffView.cursorY != 20+viewport {
+		t.Fatalf("cursor after PgDn = %d, want %d", m.diffView.cursorY, 20+viewport)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyPgUp})
+	if m.diffView.cursorY != 20 {
+		t.Fatalf("cursor after PgUp = %d, want 20", m.diffView.cursorY)
+	}
+}
+
 func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 	t.Parallel()
 

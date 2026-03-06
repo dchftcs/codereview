@@ -45,6 +45,7 @@ internal/
 - **Async git operations**: `loadDiff()` and `navigateCommit()` return `tea.Cmd` so git subprocesses don't block the UI.
 - **Chroma for highlighting**: Pure Go, no external deps. Lexer is cached per file extension. Highlighting happens per-line at render time.
 - **Row-based rendering**: Diff lines, hunk headers, and comments are flattened into a `[]diffRow` slice. Cursor and scroll operate on row indices. This simplifies scrolling, cursor positioning, and comment insertion.
+- **Dual jump semantics**: `gg`/`G` (plus `[count]gg`/`[count]G`) are absolute-row jumps for Vim parity. `H`/`L` are viewport-relative jumps (top/bottom visible line) for scroll priming from the current screen. `PgDn`/`PgUp` page by one visible viewport height.
 - **Side-by-side alignment**: `alignPairs()` in `parser.go` pairs consecutive delete+insert sequences. Unpaired deletes/inserts get `nil` on the other side.
 - **ANSI-aware truncation**: `truncate()` uses `lipgloss.Width()` to measure visible width. Falls back to stripped text when truncation is needed (loses highlighting on that line but avoids garbled escape sequences).
 - **Per-file state preservation**: `fileStates map[int]fileState` on `Model` saves/restores scroll, cursor, and comment input state per file index. `expandedSet map[int]bool` tracks expand mode per file. State is saved before switching files (`]`/`[`) and restored on return. Both maps are reset on commit navigation.

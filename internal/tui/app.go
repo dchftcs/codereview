@@ -435,6 +435,14 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.moveCursor(count)
 	case key.Matches(msg, keys.Up):
 		m.diffView.moveCursor(-count)
+	case key.Matches(msg, keys.ScreenTop):
+		m.diffView.moveCursorToViewportTop()
+	case key.Matches(msg, keys.ScreenBottom):
+		m.diffView.moveCursorToViewportBottom()
+	case key.Matches(msg, keys.FullPageDown):
+		m.diffView.moveCursor(count * m.diffView.contentViewportHeight())
+	case key.Matches(msg, keys.FullPageUp):
+		m.diffView.moveCursor(-count * m.diffView.contentViewportHeight())
 	case key.Matches(msg, keys.HalfPageDown):
 		m.diffView.moveCursor(count * m.diffView.height / 2)
 	case key.Matches(msg, keys.HalfPageUp):
@@ -873,8 +881,10 @@ func (m Model) helpView() string {
 	entries := []struct{ key, desc string }{
 		{"j / k / ↑ / ↓", "Move cursor up/down"},
 		{"[count]j/k", "Move by count (e.g. 9j)"},
+		{"H / L", "Top / bottom visible line"},
 		{"gg / G", "Go to top / bottom"},
 		{"[count]gg / [count]G", "Go to line"},
+		{"PgDn / PgUp", "Page down/up (viewport height)"},
 		{"Ctrl+d / Ctrl+u", "Half page down/up"},
 		{"/", "Search in diff"},
 		{"f", "Find file by name/path"},
@@ -1031,7 +1041,7 @@ func (m Model) renderFooter() string {
 	}
 	commentCount := fmt.Sprintf("%d comments", len(m.review.Comments))
 	footerPrimary := footerStyle.MaxWidth(m.width).Render(
-		fmt.Sprintf(" `j/k`move `gg/G`top/bot `/`search `n/N`next/prev `c`comment `R`general `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
+		fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `c`comment `R`general `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
 			modeStr))
 	dividerWidth := m.width
 	if dividerWidth < 1 {

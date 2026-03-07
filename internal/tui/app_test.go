@@ -68,7 +68,7 @@ func TestInlineCommentModeSubmitAndCancel(t *testing.T) {
 	}
 
 	m = typeText(m, "looks good")
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 
 	if m.mode != modeNormal {
 		t.Fatalf("mode after submit = %v, want %v", m.mode, modeNormal)
@@ -146,7 +146,7 @@ func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 
 	m = pressKey(m, keyRunes("c"))
 	m = typeText(m, "old text")
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if got := len(m.review.Comments); got != 1 {
 		t.Fatalf("expected one inline comment, got %d", got)
 	}
@@ -156,7 +156,7 @@ func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 		t.Fatalf("expected edit mode; mode=%v editing=%v", m.mode, m.diffView.commentEditing)
 	}
 	m = typeText(m, " updated")
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if got := len(m.review.Comments); got != 1 {
 		t.Fatalf("expected edited comment to remain single entry, got %d", got)
 	}
@@ -236,7 +236,7 @@ func TestQuitWithUnsavedReviewPromptsToSave(t *testing.T) {
 	m = pressKey(m, keyRunes("j"))
 	m = pressKey(m, keyRunes("c"))
 	m = typeText(m, "unsaved note")
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 
 	m = pressKey(m, keyRunes("q"))
 	if m.mode != modeQuitConfirm {

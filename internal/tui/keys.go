@@ -38,6 +38,9 @@ type keyMap struct {
 	FirstModified  key.Binding
 	ShrinkPanel    key.Binding
 	GrowPanel      key.Binding
+	OpenEditor        key.Binding
+	SubmitComment     key.Binding
+	ToggleRelativeNum key.Binding
 }
 
 var keys = keyMap{
@@ -59,8 +62,8 @@ var keys = keyMap{
 	DeleteComment:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete comment")),
 	EditComment:    key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit comment")),
 	GeneralComment: key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "general comment")),
-	FullPageDown:   key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn/up", "page down/up")),
-	FullPageUp:     key.NewBinding(key.WithKeys("pgup"), key.WithHelp("", "")),
+	FullPageDown:   key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn/up", "page down/up")),
+	FullPageUp:     key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("", "")),
 	HalfPageDown:   key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
 	HalfPageUp:     key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
 	Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -76,4 +79,7 @@ var keys = keyMap{
 	FirstModified:  key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "first modified")),
 	ShrinkPanel:    key.NewBinding(key.WithKeys("<"), key.WithHelp("</>", "resize panel")),
 	GrowPanel:      key.NewBinding(key.WithKeys(">"), key.WithHelp("", "")),
+	OpenEditor:        key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "open editor")),
+	SubmitComment:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit comment")),
+	ToggleRelativeNum: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "toggle line nums")),
 }

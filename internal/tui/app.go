@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -155,6 +156,23 @@ type expandLoadedMsg struct {
 	err   error
 }
 
+// editorFinishedMsg is sent when $EDITOR exits.
+type editorFinishedMsg struct {
+	tmpFile string
+	err     error
+}
+
+// editorCmd returns the user's preferred editor command.
+func editorCmd() string {
+	if e := os.Getenv("EDITOR"); e != "" {
+		return e
+	}
+	if e := os.Getenv("VISUAL"); e != "" {
+		return e
+	}
+	return "vi"
+}
+
 func (m Model) loadExpandedDiff() tea.Cmd {
 	return func() tea.Msg {
 		rawDiff, err := m.git.DiffFull(m.config.RevSpec)
@@ -214,6 +232,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case expandLoadedMsg:
 		m.applyExpandLoaded(msg)
+		return m, nil
+
+	case generalEditorFinishedMsg:
+		defer os.Remove(msg.tmpFile)
+		if msg.err != nil {
+			m.err = msg.err
+			m.mode = modeNormal
+			return m, nil
+		}
+		content, err := os.ReadFile(msg.tmpFile)
+		if err != nil {
+			m.err = err
+			m.mode = modeNormal
+			return m, nil
+		}
+		text := strings.TrimRight(string(content), "\n")
+		if text != "" {
+			m.review.AddGeneralComment(text)
+			m.dirty = true
+		}
+		m.mode = modeNormal
+		return m, nil
+
+	case editorFinishedMsg:
+		defer os.Remove(msg.tmpFile)
+		if msg.err != nil {
+			m.err = msg.err
+			m.mode = modeNormal
+			m.diffView.deactivateComment()
+			return m, nil
+		}
+		content, err := os.ReadFile(msg.tmpFile)
+		if err != nil {
+			m.err = err
+			m.mode = modeNormal
+			m.diffView.deactivateComment()
+			return m, nil
+		}
+		text := strings.TrimRight(string(content), "\n")
+		if text != "" {
+			if m.diffView.commentEditing {
+				m.review.DeleteComment(m.diffView.commentFile, m.diffView.commentLineNum)
+			}
+			m.review.AddComment(m.diffView.commentFile, m.diffView.commentLineNum, text)
+			m.dirty = true
+			m.diffView.deactivateComment()
+			m.diffView.buildRows()
+		} else {
+			m.diffView.deactivateComment()
+		}
+		m.mode = modeNormal
 		return m, nil
 
 	case tea.KeyMsg:
@@ -600,6 +669,9 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setDiffViewForSelection(true)
 		}
 
+	case key.Matches(msg, keys.ToggleRelativeNum):
+		m.diffView.cycleLineNumMode()
+
 	case key.Matches(msg, keys.ToggleView):
 		m.diffView.toggleMode()
 
@@ -633,8 +705,26 @@ func (m Model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.deactivateComment()
 		return m, nil
 
-	case key.Matches(msg, keys.Submit):
-		text := m.diffView.commentValue()
+	case key.Matches(msg, keys.OpenEditor):
+		// Open $EDITOR with current comment text
+		tmpFile, err := os.CreateTemp("", "cr-comment-*.txt")
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		currentText := m.diffView.commentValue()
+		if currentText != "" {
+			tmpFile.WriteString(currentText)
+		}
+		tmpFile.Close()
+		editor := editorCmd()
+		c := exec.Command(editor, tmpFile.Name())
+		return m, tea.ExecProcess(c, func(err error) tea.Msg {
+			return editorFinishedMsg{tmpFile: tmpFile.Name(), err: err}
+		})
+
+	case key.Matches(msg, keys.SubmitComment):
+		text := strings.TrimSpace(m.diffView.commentValue())
 		if text != "" {
 			if m.diffView.commentEditing {
 				m.review.DeleteComment(m.diffView.commentFile, m.diffView.commentLineNum)
@@ -650,10 +740,16 @@ func (m Model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Forward to text input
+	// Forward to textarea (enter inserts newlines)
 	var cmd tea.Cmd
 	m.diffView.commentInput, cmd = m.diffView.commentInput.Update(msg)
 	return m, cmd
+}
+
+// generalEditorFinishedMsg is sent when $EDITOR exits for a general comment.
+type generalEditorFinishedMsg struct {
+	tmpFile string
+	err     error
 }
 
 func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -662,6 +758,24 @@ func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		m.bottomBar.deactivate()
 		return m, nil
+
+	case key.Matches(msg, keys.OpenEditor):
+		m.bottomBar.deactivate()
+		tmpFile, err := os.CreateTemp("", "cr-general-*.txt")
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		currentText := m.bottomBar.value()
+		if currentText != "" {
+			tmpFile.WriteString(currentText)
+		}
+		tmpFile.Close()
+		editor := editorCmd()
+		c := exec.Command(editor, tmpFile.Name())
+		return m, tea.ExecProcess(c, func(err error) tea.Msg {
+			return generalEditorFinishedMsg{tmpFile: tmpFile.Name(), err: err}
+		})
 
 	case key.Matches(msg, keys.Submit):
 		text := m.bottomBar.value()
@@ -884,7 +998,7 @@ func (m Model) helpView() string {
 		{"H / L", "Top / bottom visible line"},
 		{"gg / G", "Go to top / bottom"},
 		{"[count]gg / [count]G", "Go to line"},
-		{"PgDn / PgUp", "Page down/up (viewport height)"},
+		{"PgDn / PgUp / Ctrl+f / Ctrl+b", "Page down/up (viewport height)"},
 		{"Ctrl+d / Ctrl+u", "Half page down/up"},
 		{"/", "Search in diff"},
 		{"f", "Find file by name/path"},
@@ -899,11 +1013,14 @@ func (m Model) helpView() string {
 		{"h / l / ← / →", "Previous / next commit"},
 		{"c", "Add inline comment at cursor"},
 		{"R", "Add general comment"},
-		{"Enter", "Submit comment"},
+		{"Ctrl+s", "Submit comment"},
+		{"Enter", "Newline in comment"},
+		{"Ctrl+g", "Open $EDITOR for comment"},
 		{"Esc", "Cancel comment"},
 		{"d", "Delete comment at cursor"},
 		{"E", "Edit comment at cursor"},
 		{"Tab", "Toggle side-by-side / unified"},
+		{"Ctrl+n", "Cycle line numbers (both/rel/abs)"},
 		{"e", "Toggle full file context"},
 		{"s", "Save review and exit"},
 		{"q / Ctrl+c", "Quit (prompts if unsaved)"},

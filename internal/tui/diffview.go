@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/codereview/internal/diff"
 	"github.com/dc/codereview/internal/review"
@@ -20,6 +20,14 @@ const (
 )
 
 const scrollMarginLines = 5
+
+type lineNumMode int
+
+const (
+	lineNumBoth         lineNumMode = iota // relative + absolute
+	lineNumRelativeOnly                    // relative only
+	lineNumAbsoluteOnly                    // absolute only
+)
 
 type diffView struct {
 	file      *diff.FileDiff
@@ -37,7 +45,9 @@ type diffView struct {
 	commentEditing bool
 	commentLineNum int
 	commentFile    string
-	commentInput   textinput.Model
+	commentInput   textarea.Model
+	// Line number display mode
+	lineNums lineNumMode
 }
 
 type diffRowKind int
@@ -64,7 +74,7 @@ type fileState struct {
 	commentEditing bool
 	commentLineNum int
 	commentFile    string
-	commentInput   textinput.Model
+	commentInput   textarea.Model
 }
 
 func (dv *diffView) saveState() fileState {
@@ -92,7 +102,43 @@ func (dv *diffView) restoreState(fs fileState) {
 }
 
 func newDiffView() diffView {
-	return diffView{mode: viewSideBySide}
+	return diffView{mode: viewSideBySide, lineNums: lineNumBoth}
+}
+
+// cycleLineNumMode cycles: both → relative only → absolute only → both.
+func (dv *diffView) cycleLineNumMode() {
+	switch dv.lineNums {
+	case lineNumBoth:
+		dv.lineNums = lineNumRelativeOnly
+	case lineNumRelativeOnly:
+		dv.lineNums = lineNumAbsoluteOnly
+	case lineNumAbsoluteOnly:
+		dv.lineNums = lineNumBoth
+	}
+}
+
+func (dv *diffView) showRelative() bool {
+	return dv.lineNums == lineNumBoth || dv.lineNums == lineNumRelativeOnly
+}
+
+func (dv *diffView) showAbsolute() bool {
+	return dv.lineNums == lineNumBoth || dv.lineNums == lineNumAbsoluteOnly
+}
+
+// relativeNumStr returns a 3-char right-aligned relative row number string.
+// The cursor row shows "  0", spacers show "   ", others show distance.
+func (dv *diffView) relativeNumStr(rowIdx int) string {
+	if rowIdx >= 0 && rowIdx < len(dv.rows) && dv.rows[rowIdx].kind == rowSpacer {
+		return "   "
+	}
+	if rowIdx == dv.cursorY {
+		return "  0"
+	}
+	dist := rowIdx - dv.cursorY
+	if dist < 0 {
+		dist = -dist
+	}
+	return fmt.Sprintf("%3d", dist)
 }
 
 func (dv *diffView) setFile(f *diff.FileDiff, rev *review.Review) {
@@ -482,31 +528,33 @@ func (dv *diffView) toggleMode() {
 	}
 }
 
+func (dv *diffView) newCommentTextarea() textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
+	ta.CharLimit = 2000
+	ta.SetWidth(dv.width - 12)
+	ta.SetHeight(3)
+	ta.ShowLineNumbers = false
+	ta.Focus()
+	return ta
+}
+
 func (dv *diffView) activateComment(file string, lineNum int) {
-	ti := textinput.New()
-	ti.Placeholder = "Enter comment..."
-	ti.CharLimit = 500
-	ti.Width = dv.width - 12
-	ti.Focus()
+	ta := dv.newCommentTextarea()
 	dv.commentActive = true
 	dv.commentFile = file
 	dv.commentLineNum = lineNum
-	dv.commentInput = ti
+	dv.commentInput = ta
 }
 
 func (dv *diffView) activateEditComment(file string, lineNum int, existingText string) {
-	ti := textinput.New()
-	ti.Placeholder = "Enter comment..."
-	ti.CharLimit = 500
-	ti.Width = dv.width - 12
-	ti.SetValue(existingText)
-	ti.SetCursor(len(existingText))
-	ti.Focus()
+	ta := dv.newCommentTextarea()
+	ta.SetValue(existingText)
 	dv.commentActive = true
 	dv.commentEditing = true
 	dv.commentFile = file
 	dv.commentLineNum = lineNum
-	dv.commentInput = ti
+	dv.commentInput = ta
 }
 
 func (dv *diffView) deactivateComment() {
@@ -550,7 +598,11 @@ func (dv *diffView) viewWithPath(filePath string) string {
 }
 
 func (dv *diffView) renderSideBySideContent() string {
-	colWidth := (dv.width - 4) / 2 // account for border + separator
+	relGutter := 0
+	if dv.showRelative() {
+		relGutter = 4 // 3 digits + 1 space
+	}
+	colWidth := (dv.width - 4 - relGutter) / 2 // account for border + separator + relative gutter
 	if colWidth < 20 {
 		colWidth = 20
 	}
@@ -565,18 +617,25 @@ func (dv *diffView) renderSideBySideContent() string {
 	for i := dv.scrollY; i < end; i++ {
 		row := dv.rows[i]
 		isCursor := i == dv.cursorY
+
+		relPrefix := ""
+		if dv.showRelative() {
+			relPrefix = lineNumStyle.Width(3).Render(dv.relativeNumStr(i)) + " "
+		}
+
 		switch row.kind {
 		case rowSpacer:
 			lines = append(lines, "")
 		case rowHunkHeader:
-			line := hunkHeaderStyle.Width(dv.width - 4).Render(row.hunk)
+			contentW := dv.width - 4 - relGutter
+			line := hunkHeaderStyle.Width(contentW).Render(row.hunk)
 			if isCursor {
-				line = cursorStyle.Width(dv.width - 4).Render(row.hunk)
+				line = cursorStyle.Width(contentW).Render(row.hunk)
 			}
-			lines = append(lines, line)
+			lines = append(lines, relPrefix+line)
 		case rowComment:
-			commentText := fmt.Sprintf("💬 %s", row.comment.Text)
-			lines = append(lines, commentBorderStyle.Width(dv.width-6).Render(commentText))
+			commentText := "💬 " + row.comment.Text
+			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
 			left := dv.renderSide(pair.Left, colWidth, true)
@@ -586,13 +645,13 @@ func (dv *diffView) renderSideBySideContent() string {
 			if isCursor {
 				rendered = withPersistentBg(rendered, bgHex(cursorStyle.GetBackground()))
 				visW := lipgloss.Width(rendered)
-				cw := dv.width - 4
+				cw := dv.width - 4 - relGutter
 				if visW < cw {
 					rendered += strings.Repeat(" ", cw-visW)
 				}
 				rendered = cursorStyle.MaxWidth(cw).Render(rendered)
 			}
-			lines = append(lines, rendered)
+			lines = append(lines, relPrefix+rendered)
 		}
 
 		if isCursor && dv.commentActive {
@@ -608,12 +667,6 @@ func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) stri
 		return lipgloss.NewStyle().Width(width).Render("")
 	}
 
-	num := line.OldNum
-	if !isLeft {
-		num = line.NewNum
-	}
-
-	numStr := lineNumStyle.Render(fmt.Sprintf("%d", num))
 	content := line.Content
 
 	// Apply highlighting if available
@@ -635,9 +688,20 @@ func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) stri
 		style = lipgloss.NewStyle()
 	}
 
-	textWidth := width - 6 // line number width + space
-	text := style.Render(truncate(content, textWidth))
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, numStr, " ", text)
+	var combined string
+	if dv.showAbsolute() {
+		num := line.OldNum
+		if !isLeft {
+			num = line.NewNum
+		}
+		numStr := lineNumStyle.Render(fmt.Sprintf("%d", num))
+		textWidth := width - 6 // line number width (5) + space (1)
+		text := style.Render(truncate(content, textWidth))
+		combined = lipgloss.JoinHorizontal(lipgloss.Top, numStr, " ", text)
+	} else {
+		text := style.Render(truncate(content, width))
+		combined = text
+	}
 
 	// Pad to exact width manually to avoid lipgloss word-wrapping at hyphens.
 	visW := lipgloss.Width(combined)
@@ -668,23 +732,38 @@ func (dv *diffView) renderUnifiedContent() string {
 		end = len(dv.rows)
 	}
 
-	contentWidth := dv.width - 16 // line numbers + margins
+	relGutter := 0
+	if dv.showRelative() {
+		relGutter = 4 // 3 digits + 1 space
+	}
+	absGutter := 0
+	if dv.showAbsolute() {
+		absGutter = 12 // oldNum(5) + space(1) + newNum(5) + space(1)
+	}
+	contentWidth := dv.width - 4 - relGutter - absGutter // border + gutters
 
 	for i := dv.scrollY; i < end; i++ {
 		row := dv.rows[i]
 		isCursor := i == dv.cursorY
+
+		relPrefix := ""
+		if dv.showRelative() {
+			relPrefix = lineNumStyle.Width(3).Render(dv.relativeNumStr(i)) + " "
+		}
+
 		switch row.kind {
 		case rowSpacer:
 			lines = append(lines, "")
 		case rowHunkHeader:
-			line := hunkHeaderStyle.Width(dv.width - 4).Render(row.hunk)
+			contentW := dv.width - 4 - relGutter
+			line := hunkHeaderStyle.Width(contentW).Render(row.hunk)
 			if isCursor {
-				line = cursorStyle.Width(dv.width - 4).Render(row.hunk)
+				line = cursorStyle.Width(contentW).Render(row.hunk)
 			}
-			lines = append(lines, line)
+			lines = append(lines, relPrefix+line)
 		case rowComment:
-			commentText := fmt.Sprintf("💬 %s", row.comment.Text)
-			lines = append(lines, commentBorderStyle.Width(dv.width-6).Render(commentText))
+			commentText := "💬 " + row.comment.Text
+			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
 			var rendered []string
@@ -702,14 +781,14 @@ func (dv *diffView) renderUnifiedContent() string {
 			for _, r := range rendered {
 				if isCursor {
 					r = withPersistentBg(r, bgHex(cursorStyle.GetBackground()))
-					cw := dv.width - 4
+					cw := dv.width - 4 - relGutter
 					visW := lipgloss.Width(r)
 					if visW < cw {
 						r += strings.Repeat(" ", cw-visW)
 					}
 					r = cursorStyle.MaxWidth(cw).Render(r)
 				}
-				lines = append(lines, r)
+				lines = append(lines, relPrefix+r)
 			}
 		}
 
@@ -722,26 +801,18 @@ func (dv *diffView) renderUnifiedContent() string {
 }
 
 func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
-	oldNum := "     "
-	newNum := "     "
 	prefix := " "
 	style := lipgloss.NewStyle()
 
 	switch line.Op {
-	case diff.OpEqual:
-		oldNum = fmt.Sprintf("%5d", line.OldNum)
-		newNum = fmt.Sprintf("%5d", line.NewNum)
 	case diff.OpDelete:
-		oldNum = fmt.Sprintf("%5d", line.OldNum)
 		prefix = "-"
 		style = removedStyle
 	case diff.OpInsert:
-		newNum = fmt.Sprintf("%5d", line.NewNum)
 		prefix = "+"
 		style = addedStyle
 	}
 
-	numStr := lipgloss.NewStyle().Foreground(colorDim).Render(oldNum + " " + newNum)
 	content := line.Content
 	if dv.highlight != nil && dv.file != nil {
 		filename := dv.file.NewName
@@ -751,10 +822,32 @@ func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
 		content = dv.highlight(filename, content)
 	}
 	text := style.Render(prefix + truncate(content, width))
-	combined := numStr + " " + text
+
+	var combined string
+	if dv.showAbsolute() {
+		oldNum := "     "
+		newNum := "     "
+		switch line.Op {
+		case diff.OpEqual:
+			oldNum = fmt.Sprintf("%5d", line.OldNum)
+			newNum = fmt.Sprintf("%5d", line.NewNum)
+		case diff.OpDelete:
+			oldNum = fmt.Sprintf("%5d", line.OldNum)
+		case diff.OpInsert:
+			newNum = fmt.Sprintf("%5d", line.NewNum)
+		}
+		numStr := lipgloss.NewStyle().Foreground(colorDim).Render(oldNum + " " + newNum)
+		combined = numStr + " " + text
+	} else {
+		combined = text
+	}
 
 	// Pad to exact width manually to avoid lipgloss word-wrapping at hyphens.
-	lineWidth := dv.width - 4
+	relGutter := 0
+	if dv.showRelative() {
+		relGutter = 4
+	}
+	lineWidth := dv.width - 4 - relGutter
 	visW := lipgloss.Width(combined)
 	if visW < lineWidth {
 		combined += strings.Repeat(" ", lineWidth-visW)
@@ -778,7 +871,7 @@ func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
 func (dv *diffView) renderInlineInput() string {
 	label := commentPromptStyle.Render(fmt.Sprintf(" Comment on line %d: ", dv.commentLineNum))
 	input := dv.commentInput.View()
-	content := label + input
+	content := label + "\n" + input
 	return commentBorderStyle.Width(dv.width - 6).Render(content)
 }
 

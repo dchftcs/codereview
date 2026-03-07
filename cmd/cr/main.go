@@ -44,7 +44,7 @@ func main() {
 	}
 
 	m := tui.NewModel(cfg)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	finalModel, err := p.Run()
 	if err != nil {
@@ -162,13 +162,18 @@ Usage:
   cr --theme dark|light       Color theme (auto-detected from COLORFGBG)
 
 Keys:
-  j/k, arrows    Scroll up/down through diff
-  n/N            Next/previous file
-  h/l, ←/→       Previous/next commit
+  j/k, ↑/↓       Scroll up/down through diff
+  ]/[, →/←       Next/previous file
+  h/l            Previous/next commit
   c              Enter comment mode at current line
-  Enter          Submit comment
+  R              Add general comment (multi-line)
+  Ctrl+r         View/manage general comments
+  Ctrl+s         Submit comment
+  Enter          Newline in comment
+  Ctrl+g         Open $EDITOR for comment
   Esc            Cancel comment / exit mode
   d              Delete comment at current line
+  E              Edit comment at cursor
   e              Toggle expanded view (hide file list)
   Tab            Toggle side-by-side vs unified diff
   Ctrl+d/u       Half page down/up

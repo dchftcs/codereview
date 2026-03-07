@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/codereview/internal/diff"
@@ -29,6 +30,7 @@ const (
 	modeContentSearch
 	modeSaveAs
 	modeQuitConfirm
+	modeViewGeneral
 )
 
 // GitService is the narrow git surface needed by the TUI.
@@ -88,6 +90,10 @@ type Model struct {
 	expandedFiles  []diff.FileDiff // cached full-context diffs
 	fileStates     map[string]fileState
 	referenceFiles map[string]*diff.FileDiff
+	// General comment viewer/editor
+	generalViewIdx int           // selected index in general comments viewer
+	generalInput   textarea.Model // multi-line textarea for general comments
+	generalEditIdx int           // -1 for new comment, >=0 for editing existing
 	// Vim-style navigation
 	countBuf      string // accumulated digit prefix (e.g. "12" for 12j)
 	pendingG      bool   // waiting for second 'g' keypress (gg)
@@ -95,6 +101,7 @@ type Model struct {
 	searchMatches []int  // row indices matching the search
 	searchIdx     int    // current position in searchMatches
 	err           error
+	statusMsg     string // transient status message shown in footer
 	quitting      bool
 	saving        bool
 	dirty         bool
@@ -249,7 +256,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		text := strings.TrimRight(string(content), "\n")
 		if text != "" {
-			m.review.AddGeneralComment(text)
+			if m.generalEditIdx >= 0 {
+				m.review.EditGeneralComment(m.generalEditIdx, text)
+				m.statusMsg = "General comment updated"
+			} else {
+				m.review.AddGeneralComment(text)
+				m.statusMsg = fmt.Sprintf("General comment added (%d total)", len(m.review.GeneralComments))
+			}
 			m.dirty = true
 		}
 		m.mode = modeNormal
@@ -285,6 +298,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		return m, nil
 
+	case tea.MouseMsg:
+		if m.mode == modeNormal && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			return m.handleMouseClick(msg.X, msg.Y)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.mode == modeComment {
 			return m.updateComment(msg)
@@ -309,6 +328,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == modeHelp {
 			return m.updateHelp(msg)
+		}
+		if m.mode == modeViewGeneral {
+			return m.updateViewGeneral(msg)
 		}
 		return m.updateNormal(msg)
 	}
@@ -443,6 +465,7 @@ func (m *Model) currentReviewFileName() (string, bool) {
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "" // clear transient status on any keypress
 	k := msg.String()
 
 	// Handle 'gg' sequence: second 'g' goes to top
@@ -602,10 +625,16 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.activateComment(file, lineNum)
 		return m, m.diffView.commentInput.Focus()
 
+	case key.Matches(msg, keys.ViewGeneral):
+		m.mode = modeViewGeneral
+		m.generalViewIdx = 0
+		return m, nil
+
 	case key.Matches(msg, keys.GeneralComment):
 		m.mode = modeGeneralComment
-		m.bottomBar.activate("General comment:")
-		return m, m.bottomBar.input.Focus()
+		m.generalEditIdx = -1
+		m.generalInput = m.newGeneralTextarea("")
+		return m, m.generalInput.Focus()
 
 	case key.Matches(msg, keys.DeleteComment):
 		file, ok := m.currentReviewFileName()
@@ -685,6 +714,32 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
+	headerH := lipgloss.Height(m.renderHeader())
+	// Body starts at y == headerH. Panels have a 1-line border at top.
+	bodyY := y - headerH - 1 // row index within panel content area
+
+	if bodyY < 0 || bodyY >= m.diffView.height {
+		return m, nil
+	}
+
+	// File list panel occupies columns 0..fileListWidth+1 (including border)
+	if x <= m.fileListWidth+1 {
+		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
+		if m.fileList.clickAt(bodyY) {
+			m.setDiffViewForSelection(false)
+		}
+		return m, nil
+	}
+
+	// Diff panel: content starts 1 line below border top (path line)
+	diffY := bodyY - 1 // subtract path line
+	if diffY >= 0 {
+		m.diffView.clickAt(diffY)
+	}
+	return m, nil
+}
+
 // consumeCount reads and clears the count prefix buffer, returning at least 1.
 func (m *Model) consumeCount() int {
 	if m.countBuf == "" {
@@ -756,17 +811,15 @@ func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Cancel):
 		m.mode = modeNormal
-		m.bottomBar.deactivate()
 		return m, nil
 
 	case key.Matches(msg, keys.OpenEditor):
-		m.bottomBar.deactivate()
 		tmpFile, err := os.CreateTemp("", "cr-general-*.txt")
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
-		currentText := m.bottomBar.value()
+		currentText := m.generalInput.Value()
 		if currentText != "" {
 			tmpFile.WriteString(currentText)
 		}
@@ -777,20 +830,148 @@ func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return generalEditorFinishedMsg{tmpFile: tmpFile.Name(), err: err}
 		})
 
-	case key.Matches(msg, keys.Submit):
-		text := m.bottomBar.value()
+	case key.Matches(msg, keys.SubmitComment):
+		text := strings.TrimSpace(m.generalInput.Value())
 		if text != "" {
-			m.review.AddGeneralComment(text)
+			if m.generalEditIdx >= 0 {
+				m.review.EditGeneralComment(m.generalEditIdx, text)
+				m.statusMsg = "General comment updated"
+			} else {
+				m.review.AddGeneralComment(text)
+				m.statusMsg = fmt.Sprintf("General comment added (%d total)", len(m.review.GeneralComments))
+			}
 			m.dirty = true
 		}
 		m.mode = modeNormal
-		m.bottomBar.deactivate()
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.bottomBar.input, cmd = m.bottomBar.input.Update(msg)
+	m.generalInput, cmd = m.generalInput.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) newGeneralTextarea(initial string) textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
+	ta.CharLimit = 2000
+	w := m.width - 20
+	if w < 40 {
+		w = 40
+	}
+	ta.SetWidth(w)
+	ta.SetHeight(5)
+	if initial != "" {
+		ta.SetValue(initial)
+	}
+	return ta
+}
+
+func (m Model) updateViewGeneral(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := msg.String()
+	total := len(m.review.GeneralComments)
+	switch {
+	case key.Matches(msg, keys.Cancel) || k == "q":
+		m.mode = modeNormal
+		return m, nil
+	case k == "j" || k == "down":
+		if m.generalViewIdx < total-1 {
+			m.generalViewIdx++
+		}
+	case k == "k" || k == "up":
+		if m.generalViewIdx > 0 {
+			m.generalViewIdx--
+		}
+	case k == "d":
+		if total > 0 {
+			m.review.DeleteGeneralComment(m.generalViewIdx)
+			m.dirty = true
+			m.statusMsg = "General comment deleted"
+			total = len(m.review.GeneralComments)
+			if m.generalViewIdx >= total && total > 0 {
+				m.generalViewIdx = total - 1
+			}
+		}
+	case k == "E":
+		if total > 0 {
+			m.mode = modeGeneralComment
+			m.generalEditIdx = m.generalViewIdx
+			m.generalInput = m.newGeneralTextarea(m.review.GeneralComments[m.generalViewIdx])
+			return m, m.generalInput.Focus()
+		}
+	case k == "R":
+		m.mode = modeGeneralComment
+		m.generalEditIdx = -1
+		m.generalInput = m.newGeneralTextarea("")
+		return m, m.generalInput.Focus()
+	}
+	return m, nil
+}
+
+func (m Model) viewGeneralComments() string {
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorPurple).
+		MarginBottom(1).
+		Render("General Comments")
+
+	var rows []string
+	if len(m.review.GeneralComments) == 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(colorDim).Render("No general comments yet. Press R to add one."))
+	} else {
+		for i, c := range m.review.GeneralComments {
+			prefix := fmt.Sprintf("%d. ", i+1)
+			// Truncate long comments for display
+			display := strings.ReplaceAll(c, "\n", " ↵ ")
+			maxW := m.width - 30
+			if maxW < 20 {
+				maxW = 20
+			}
+			if lipgloss.Width(display) > maxW {
+				display = truncateToWidth(display, maxW)
+			}
+			line := prefix + display
+			if i == m.generalViewIdx {
+				rows = append(rows, cursorStyle.Render(line))
+			} else {
+				rows = append(rows, lipgloss.NewStyle().Foreground(colorFg).Render(line))
+			}
+		}
+	}
+
+	hint := lipgloss.NewStyle().Foreground(colorDim).MarginTop(1).Render(
+		"j/k navigate  d delete  E edit  R add  Esc close")
+
+	content := title + "\n" + strings.Join(rows, "\n") + "\n" + hint
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorPurple).
+		Padding(1, 3).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m Model) viewGeneralCommentInput() string {
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colorYellow).
+		MarginBottom(1).
+		Render("General Comment")
+
+	hint := lipgloss.NewStyle().Foreground(colorDim).MarginTop(1).Render(
+		"ctrl+s submit | ctrl+g editor | esc cancel")
+
+	content := title + "\n" + m.generalInput.View() + "\n" + hint
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorYellow).
+		Padding(1, 3).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height-2, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1004,15 +1185,16 @@ func (m Model) helpView() string {
 		{"f", "Find file by name/path"},
 		{"p", "Find file by content"},
 		{"n / N", "Next / previous match"},
-		{"] / [", "Next / previous file"},
+		{"] / [ / → / ←", "Next / previous file"},
 		{"} / {", "Next / previous modified file"},
 		{"M", "Jump to first modified file"},
 		{"t", "Toggle changed / all files"},
 		{"o", "Open/close selected directory"},
 		{"< / >", "Shrink / grow file panel"},
-		{"h / l / ← / →", "Previous / next commit"},
+		{"h / l", "Previous / next commit"},
 		{"c", "Add inline comment at cursor"},
-		{"R", "Add general comment"},
+		{"R", "Add general comment (multi-line)"},
+		{"Ctrl+r", "View/manage general comments"},
 		{"Ctrl+s", "Submit comment"},
 		{"Enter", "Newline in comment"},
 		{"Ctrl+g", "Open $EDITOR for comment"},
@@ -1156,18 +1338,25 @@ func (m Model) renderFooter() string {
 	if m.fileList.mode == fileListModeFullTree {
 		fileMode = "all"
 	}
-	commentCount := fmt.Sprintf("%d comments", len(m.review.Comments))
+	commentParts := []string{fmt.Sprintf("%d comments", len(m.review.Comments))}
+	if gc := len(m.review.GeneralComments); gc > 0 {
+		commentParts = append(commentParts, fmt.Sprintf("%d general", gc))
+	}
+	commentCount := strings.Join(commentParts, ", ")
 	footerPrimary := footerStyle.MaxWidth(m.width).Render(
-		fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `c`comment `R`general `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
+		fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `c`comment `R`general `^r`view `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
 			modeStr))
 	dividerWidth := m.width
 	if dividerWidth < 1 {
 		dividerWidth = 1
 	}
 	footerDivider := footerStyle.MaxWidth(m.width).Render(strings.Repeat("─", dividerWidth))
-	footerNav := footerStyle.MaxWidth(m.width).Render(
-		fmt.Sprintf(" `f`find `p`content `]/[`next/prev `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
-			fileMode, fileCount, commentCount))
+	navInfo := fmt.Sprintf(" `f`find `p`content `]/[/←/→`next/prev `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
+		fileMode, fileCount, commentCount)
+	if m.statusMsg != "" {
+		navInfo += "  " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)
+	}
+	footerNav := footerStyle.MaxWidth(m.width).Render(navInfo)
 	return lipgloss.JoinVertical(lipgloss.Left, footerPrimary, footerDivider, footerNav)
 }
 
@@ -1187,8 +1376,18 @@ func (m Model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.helpView(), footer)
 	}
 
+	// General comments viewer overlay
+	if m.mode == modeViewGeneral {
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.viewGeneralComments(), footer)
+	}
+
+	// General comment input overlay
+	if m.mode == modeGeneralComment {
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.viewGeneralCommentInput(), footer)
+	}
+
 	// Recompute panel heights to match actual chrome (handles footer wrapping)
-	hasBottomBar := m.mode == modeGeneralComment || m.mode == modeSearch || m.mode == modeFileSearch || m.mode == modeContentSearch || m.mode == modeSaveAs || m.mode == modeQuitConfirm
+	hasBottomBar := m.mode == modeSearch || m.mode == modeFileSearch || m.mode == modeContentSearch || m.mode == modeSaveAs || m.mode == modeQuitConfirm
 	extraLines := 0
 	if hasBottomBar {
 		extraLines = lipgloss.Height(m.bottomBar.view())

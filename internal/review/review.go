@@ -31,6 +31,20 @@ func (r *Review) AddGeneralComment(text string) {
 	r.GeneralComments = append(r.GeneralComments, text)
 }
 
+func (r *Review) DeleteGeneralComment(index int) {
+	if index < 0 || index >= len(r.GeneralComments) {
+		return
+	}
+	r.GeneralComments = append(r.GeneralComments[:index], r.GeneralComments[index+1:]...)
+}
+
+func (r *Review) EditGeneralComment(index int, text string) {
+	if index < 0 || index >= len(r.GeneralComments) {
+		return
+	}
+	r.GeneralComments[index] = text
+}
+
 func (r *Review) DeleteComment(file string, line int) {
 	var kept []Comment
 	for _, c := range r.Comments {

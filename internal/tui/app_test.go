@@ -139,7 +139,7 @@ func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 		t.Fatalf("mode after R = %v, want %v", m.mode, modeGeneralComment)
 	}
 	m = typeText(m, "overall thought")
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if got := len(m.review.GeneralComments); got != 1 || m.review.GeneralComments[0] != "overall thought" {
 		t.Fatalf("unexpected general comments: %+v", m.review.GeneralComments)
 	}

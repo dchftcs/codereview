@@ -41,6 +41,7 @@ type keyMap struct {
 	OpenEditor        key.Binding
 	SubmitComment     key.Binding
 	ToggleRelativeNum key.Binding
+	ViewGeneral       key.Binding
 }
 
 var keys = keyMap{
@@ -48,10 +49,10 @@ var keys = keyMap{
 	Down:           key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("", "")),
 	ScreenTop:      key.NewBinding(key.WithKeys("H"), key.WithHelp("H/L", "screen top/bot")),
 	ScreenBottom:   key.NewBinding(key.WithKeys("L"), key.WithHelp("", "")),
-	NextFile:       key.NewBinding(key.WithKeys("]"), key.WithHelp("]/[", "next/prev file")),
-	PrevFile:       key.NewBinding(key.WithKeys("["), key.WithHelp("", "")),
-	NextCommit:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("h/l", "prev/next commit")),
-	PrevCommit:     key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("", "")),
+	NextFile:       key.NewBinding(key.WithKeys("]", "right"), key.WithHelp("]/[/→/←", "next/prev file")),
+	PrevFile:       key.NewBinding(key.WithKeys("[", "left"), key.WithHelp("", "")),
+	NextCommit:     key.NewBinding(key.WithKeys("l"), key.WithHelp("h/l", "prev/next commit")),
+	PrevCommit:     key.NewBinding(key.WithKeys("h"), key.WithHelp("", "")),
 	Comment:        key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comment")),
 	Submit:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "submit")),
 	Cancel:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
@@ -82,4 +83,5 @@ var keys = keyMap{
 	OpenEditor:        key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "open editor")),
 	SubmitComment:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit comment")),
 	ToggleRelativeNum: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "toggle line nums")),
+	ViewGeneral:       key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "view general comments")),
 }

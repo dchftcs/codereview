@@ -70,14 +70,23 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 			} else {
 				sb.WriteString("- Snippet: unavailable in current diff context\n")
 			}
-			sb.WriteString(fmt.Sprintf("- Feedback: %s\n\n", comment.Text))
+			if strings.Contains(comment.Text, "\n") {
+				sb.WriteString("- Feedback:\n")
+				sb.WriteString(comment.Text + "\n\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("- Feedback: %s\n\n", comment.Text))
+			}
 		}
 	}
 
 	if len(rev.GeneralComments) > 0 {
 		sb.WriteString("## General Comments\n\n")
 		for _, gc := range rev.GeneralComments {
-			sb.WriteString(fmt.Sprintf("- %s\n", gc))
+			if strings.Contains(gc, "\n") {
+				sb.WriteString(fmt.Sprintf("- %s\n\n", strings.ReplaceAll(gc, "\n", "\n  ")))
+			} else {
+				sb.WriteString(fmt.Sprintf("- %s\n", gc))
+			}
 		}
 	}
 

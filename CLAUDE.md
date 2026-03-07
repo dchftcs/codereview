@@ -50,6 +50,8 @@ internal/
 - **ANSI-aware truncation**: `truncate()` uses `lipgloss.Width()` to measure visible width. Falls back to stripped text when truncation is needed (loses highlighting on that line but avoids garbled escape sequences).
 - **Per-file state preservation**: `fileStates map[int]fileState` on `Model` saves/restores scroll, cursor, and comment input state per file index. `expandedSet map[int]bool` tracks expand mode per file. State is saved before switching files (`]`/`[`) and restored on return. Both maps are reset on commit navigation.
 - **Expand/collapse stability invariant**: toggling `e` must preserve both (1) the anchored diff row identity (not just a raw line number) and (2) the cursor's on-screen row when feasible. Keep-position transitions should not apply normal scroll-margin nudging.
+- **Multi-line comments via textarea**: Inline comment input uses `textarea.Model` (not `textinput.Model`). Enter inserts newlines; `ctrl+s` submits; `ctrl+g` opens `$EDITOR` (falls back to `$VISUAL`, then `vi`) via `tea.ExecProcess`. The bottom bar still uses `textinput.Model` for single-line prompts (search, save-as, etc.) but supports `ctrl+g` for general comments.
+- **Editor integration**: `ctrl+g` writes current text to a temp file, spawns the editor, reads back on exit, and cleans up. Both inline comments (`editorFinishedMsg`) and general comments (`generalEditorFinishedMsg`) have their own message types.
 
 ## Conventions
 
@@ -66,5 +68,6 @@ internal/
 - `fileStates` and `expandedSet` must be reset (re-initialized) when switching commits, since the file list changes entirely.
 - `clampScroll()` is called from `updateLayout()` — if you add new places that change layout or row count, ensure it's called there too.
 - For expand/collapse transitions, use the keep-position path and keep-position clamping (not the normal margin-enforcing scroll path), or you'll regress stable-location behavior.
-- Inline comment input lives in `diffView` (not the bottom bar). The bottom bar (`bottomBarInput`) is only for general comments.
+- Inline comment input lives in `diffView` (not the bottom bar). The bottom bar (`bottomBarInput`) is only for general comments and single-line prompts.
 - `GeneralComments` is a `[]string` (not a single string). The formatter renders all of them.
+- The inline comment `commentInput` is a `textarea.Model`, not a `textinput.Model`. Submit is `ctrl+s` (bound as `keys.SubmitComment`), not `Enter` (`keys.Submit`). Tests must use `tea.KeyCtrlS` for inline comment submission.

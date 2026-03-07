@@ -38,7 +38,7 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `H` / `L` | Move cursor to top / bottom visible line (screen-relative) |
 | `gg` / `G` | Go to top / bottom |
 | `[count]gg` / `[count]G` | Go to line number |
-| `PgDn` / `PgUp` | Page down/up by one visible viewport height |
+| `PgDn` / `PgUp` / `Ctrl+f` / `Ctrl+b` | Page down/up by one visible viewport height |
 | `Ctrl+d` / `Ctrl+u` | Half page down/up |
 | `/` | Search in diff |
 | `n` / `N` | Next / previous search match |
@@ -46,7 +46,9 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `h` / `l` / `←` / `→` | Previous / next commit |
 | `c` | Add inline comment at cursor line |
 | `R` | Add general comment (review-level) |
-| `Enter` | Submit comment |
+| `Enter` | Insert newline in comment |
+| `Ctrl+s` | Submit comment |
+| `Ctrl+g` | Open `$EDITOR` for comment |
 | `Esc` | Cancel comment |
 | `d` | Delete comment at cursor line |
 | `E` | Edit comment at cursor line |

@@ -44,8 +44,12 @@ type diffView struct {
 	commentActive  bool
 	commentEditing bool
 	commentLineNum int
+	commentEndLine int // >0 for range comments
 	commentFile    string
 	commentInput   textarea.Model
+	// Visual selection
+	selectionAnchor int
+	selectionActive bool
 	// Line number display mode
 	lineNums lineNumMode
 }
@@ -293,9 +297,19 @@ func (dv *diffView) buildRows() {
 
 			// Insert comments after this line
 			if dv.comments != nil {
-				for _, c := range dv.comments.Comments {
-					if c.File == filename && c.Line == lineNum {
-						dv.rows = append(dv.rows, diffRow{kind: rowComment, comment: &c, lineNum: lineNum})
+				for ci := range dv.comments.Comments {
+					c := &dv.comments.Comments[ci]
+					if c.File != filename {
+						continue
+					}
+					// Single-line comments attach at c.Line
+					// Range comments attach at c.EndLine (last line of range)
+					attachLine := c.Line
+					if c.EndLine > 0 {
+						attachLine = c.EndLine
+					}
+					if attachLine == lineNum {
+						dv.rows = append(dv.rows, diffRow{kind: rowComment, comment: c, lineNum: lineNum})
 					}
 				}
 			}
@@ -399,6 +413,21 @@ func (dv *diffView) findMatches(term string) []int {
 		}
 	}
 	return matches
+}
+
+// clickAt maps a Y coordinate (relative to diff content area top) to a row
+// and moves the cursor there.
+func (dv *diffView) clickAt(y int) {
+	row := dv.scrollY + y
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(dv.rows) {
+		row = len(dv.rows) - 1
+	}
+	if row >= 0 {
+		dv.cursorY = row
+	}
 }
 
 func (dv *diffView) clampScroll() {
@@ -544,6 +573,16 @@ func (dv *diffView) activateComment(file string, lineNum int) {
 	dv.commentActive = true
 	dv.commentFile = file
 	dv.commentLineNum = lineNum
+	dv.commentEndLine = 0
+	dv.commentInput = ta
+}
+
+func (dv *diffView) activateRangeComment(file string, startLine, endLine int) {
+	ta := dv.newCommentTextarea()
+	dv.commentActive = true
+	dv.commentFile = file
+	dv.commentLineNum = startLine
+	dv.commentEndLine = endLine
 	dv.commentInput = ta
 }
 
@@ -557,9 +596,33 @@ func (dv *diffView) activateEditComment(file string, lineNum int, existingText s
 	dv.commentInput = ta
 }
 
+func (dv *diffView) activateEditRangeComment(file string, lineNum, endLine int, existingText string) {
+	ta := dv.newCommentTextarea()
+	ta.SetValue(existingText)
+	dv.commentActive = true
+	dv.commentEditing = true
+	dv.commentFile = file
+	dv.commentLineNum = lineNum
+	dv.commentEndLine = endLine
+	dv.commentInput = ta
+}
+
+// commentAtCursor returns the comment if the cursor is on a comment row.
+func (dv *diffView) commentAtCursor() *review.Comment {
+	if dv.cursorY < 0 || dv.cursorY >= len(dv.rows) {
+		return nil
+	}
+	row := dv.rows[dv.cursorY]
+	if row.kind == rowComment {
+		return row.comment
+	}
+	return nil
+}
+
 func (dv *diffView) deactivateComment() {
 	dv.commentActive = false
 	dv.commentEditing = false
+	dv.commentEndLine = 0
 	dv.commentInput.Blur()
 }
 
@@ -634,7 +697,7 @@ func (dv *diffView) renderSideBySideContent() string {
 			}
 			lines = append(lines, relPrefix+line)
 		case rowComment:
-			commentText := "💬 " + row.comment.Text
+			commentText := formatCommentBubble(row.comment)
 			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
@@ -642,7 +705,7 @@ func (dv *diffView) renderSideBySideContent() string {
 			right := dv.renderSide(pair.Right, colWidth, false)
 			sep := lipgloss.NewStyle().Foreground(colorDim).Render("│")
 			rendered := lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
-			if isCursor {
+			if isCursor || dv.isInSelection(i) {
 				rendered = withPersistentBg(rendered, bgHex(cursorStyle.GetBackground()))
 				visW := lipgloss.Width(rendered)
 				cw := dv.width - 4 - relGutter
@@ -762,7 +825,7 @@ func (dv *diffView) renderUnifiedContent() string {
 			}
 			lines = append(lines, relPrefix+line)
 		case rowComment:
-			commentText := "💬 " + row.comment.Text
+			commentText := formatCommentBubble(row.comment)
 			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
@@ -779,7 +842,7 @@ func (dv *diffView) renderUnifiedContent() string {
 				rendered = append(rendered, dv.renderUnifiedLine(pair.Left, contentWidth))
 			}
 			for _, r := range rendered {
-				if isCursor {
+				if isCursor || dv.isInSelection(i) {
 					r = withPersistentBg(r, bgHex(cursorStyle.GetBackground()))
 					cw := dv.width - 4 - relGutter
 					visW := lipgloss.Width(r)
@@ -869,10 +932,60 @@ func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
 }
 
 func (dv *diffView) renderInlineInput() string {
-	label := commentPromptStyle.Render(fmt.Sprintf(" Comment on line %d: ", dv.commentLineNum))
+	var labelText string
+	if dv.commentEndLine > 0 {
+		labelText = fmt.Sprintf(" Comment on lines %d-%d: ", dv.commentLineNum, dv.commentEndLine)
+	} else {
+		labelText = fmt.Sprintf(" Comment on line %d: ", dv.commentLineNum)
+	}
+	label := commentPromptStyle.Render(labelText)
 	input := dv.commentInput.View()
 	content := label + "\n" + input
 	return commentBorderStyle.Width(dv.width - 6).Render(content)
+}
+
+func (dv *diffView) isInSelection(rowIdx int) bool {
+	if !dv.selectionActive {
+		return false
+	}
+	lo, hi := dv.selectionAnchor, dv.cursorY
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return rowIdx >= lo && rowIdx <= hi
+}
+
+// selectionLineRange returns the (startLine, endLine) for the current visual selection.
+func (dv *diffView) selectionLineRange() (int, int) {
+	lo, hi := dv.selectionAnchor, dv.cursorY
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	startLine := 0
+	endLine := 0
+	for i := lo; i <= hi; i++ {
+		if i < 0 || i >= len(dv.rows) {
+			continue
+		}
+		ln := dv.rows[i].lineNum
+		if ln == 0 {
+			continue
+		}
+		if startLine == 0 || ln < startLine {
+			startLine = ln
+		}
+		if ln > endLine {
+			endLine = ln
+		}
+	}
+	return startLine, endLine
+}
+
+func formatCommentBubble(c *review.Comment) string {
+	if c.EndLine > 0 {
+		return fmt.Sprintf("💬 [lines %d-%d] %s", c.Line, c.EndLine, c.Text)
+	}
+	return "💬 " + c.Text
 }
 
 func truncate(s string, maxWidth int) string {

@@ -98,6 +98,72 @@ func TestAddGeneralCommentAppendsInOrder(t *testing.T) {
 	}
 }
 
+func TestAddRangeComment(t *testing.T) {
+	t.Parallel()
+
+	rev := New()
+	rev.AddRangeComment("a.go", 10, 25, "range comment")
+	rev.AddComment("a.go", 10, "single line comment")
+
+	if got := len(rev.Comments); got != 2 {
+		t.Fatalf("len(Comments) = %d, want 2", got)
+	}
+	if rev.Comments[0].EndLine != 25 {
+		t.Fatalf("EndLine = %d, want 25", rev.Comments[0].EndLine)
+	}
+	if rev.Comments[1].EndLine != 0 {
+		t.Fatalf("EndLine = %d, want 0 for single-line", rev.Comments[1].EndLine)
+	}
+}
+
+func TestDeleteCommentRange(t *testing.T) {
+	t.Parallel()
+
+	rev := New()
+	rev.AddRangeComment("a.go", 10, 25, "range")
+	rev.AddComment("a.go", 10, "single")
+
+	// DeleteComment (EndLine=0) should only delete the single-line comment
+	rev.DeleteComment("a.go", 10)
+	if got := len(rev.Comments); got != 1 {
+		t.Fatalf("len(Comments) = %d, want 1", got)
+	}
+	if rev.Comments[0].EndLine != 25 {
+		t.Fatalf("remaining comment EndLine = %d, want 25", rev.Comments[0].EndLine)
+	}
+
+	// DeleteCommentRange should delete the range comment
+	rev.DeleteCommentRange("a.go", 10, 25)
+	if got := len(rev.Comments); got != 0 {
+		t.Fatalf("len(Comments) = %d, want 0", got)
+	}
+}
+
+func TestFindCommentRange(t *testing.T) {
+	t.Parallel()
+
+	rev := New()
+	rev.AddRangeComment("a.go", 10, 25, "range")
+	rev.AddComment("a.go", 10, "single")
+
+	// FindComment (EndLine=0) finds only the single-line comment
+	c := rev.FindComment("a.go", 10)
+	if c == nil || c.Text != "single" {
+		t.Fatalf("FindComment = %+v, want single-line comment", c)
+	}
+
+	// FindCommentRange finds the range comment
+	rc := rev.FindCommentRange("a.go", 10, 25)
+	if rc == nil || rc.Text != "range" {
+		t.Fatalf("FindCommentRange = %+v, want range comment", rc)
+	}
+
+	// FindCommentRange with wrong EndLine returns nil
+	if miss := rev.FindCommentRange("a.go", 10, 20); miss != nil {
+		t.Fatalf("FindCommentRange(10, 20) = %+v, want nil", miss)
+	}
+}
+
 func TestEmptyReviewBehaviors(t *testing.T) {
 	t.Parallel()
 

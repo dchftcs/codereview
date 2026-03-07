@@ -2,9 +2,10 @@ package review
 
 // Comment represents a reviewer's inline comment.
 type Comment struct {
-	File string `json:"file"`
-	Line int    `json:"line"`
-	Text string `json:"text"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	EndLine int    `json:"end_line,omitempty"` // 0 means single-line comment
+	Text    string `json:"text"`
 }
 
 // Review holds all comments and metadata for a code review session.
@@ -27,6 +28,15 @@ func (r *Review) AddComment(file string, line int, text string) {
 	})
 }
 
+func (r *Review) AddRangeComment(file string, startLine, endLine int, text string) {
+	r.Comments = append(r.Comments, Comment{
+		File:    file,
+		Line:    startLine,
+		EndLine: endLine,
+		Text:    text,
+	})
+}
+
 func (r *Review) AddGeneralComment(text string) {
 	r.GeneralComments = append(r.GeneralComments, text)
 }
@@ -46,9 +56,13 @@ func (r *Review) EditGeneralComment(index int, text string) {
 }
 
 func (r *Review) DeleteComment(file string, line int) {
+	r.DeleteCommentRange(file, line, 0)
+}
+
+func (r *Review) DeleteCommentRange(file string, line, endLine int) {
 	var kept []Comment
 	for _, c := range r.Comments {
-		if c.File == file && c.Line == line {
+		if c.File == file && c.Line == line && c.EndLine == endLine {
 			continue
 		}
 		kept = append(kept, c)
@@ -57,8 +71,12 @@ func (r *Review) DeleteComment(file string, line int) {
 }
 
 func (r *Review) FindComment(file string, line int) *Comment {
+	return r.FindCommentRange(file, line, 0)
+}
+
+func (r *Review) FindCommentRange(file string, line, endLine int) *Comment {
 	for i := range r.Comments {
-		if r.Comments[i].File == file && r.Comments[i].Line == line {
+		if r.Comments[i].File == file && r.Comments[i].Line == line && r.Comments[i].EndLine == endLine {
 			return &r.Comments[i]
 		}
 	}

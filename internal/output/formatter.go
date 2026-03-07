@@ -53,29 +53,27 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 		})
 
 		sb.WriteString(fmt.Sprintf("## File: `%s`\n\n", filename))
-		sb.WriteString(fmt.Sprintf("Inline comments: %d\n\n", len(comments)))
 
 		f := fileMap[filename]
 
-		for i, comment := range comments {
-			context := findLineSnippet(f, comment.Line)
-			lineType := classifyLine(f, comment.Line)
+		for _, comment := range comments {
+			// Location header
+			loc := formatLocation(filename, comment)
+			sb.WriteString(fmt.Sprintf("### `%s`\n", loc))
 
-			sb.WriteString(fmt.Sprintf("### Comment %d\n", i+1))
-			sb.WriteString(fmt.Sprintf("- Location: line %d (%s)\n", comment.Line, lineType))
-			if context != "" {
+			// Snippet in Read()-style cat -n format
+			snippet := findSnippet(f, comment)
+			if snippet != "" {
 				ext := fileExtension(filename)
-				sb.WriteString("- Snippet:\n")
-				sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n", ext, context))
-			} else {
-				sb.WriteString("- Snippet: unavailable in current diff context\n")
+				sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n", ext, snippet))
 			}
-			if strings.Contains(comment.Text, "\n") {
-				sb.WriteString("- Feedback:\n")
-				sb.WriteString(comment.Text + "\n\n")
-			} else {
-				sb.WriteString(fmt.Sprintf("- Feedback: %s\n\n", comment.Text))
+
+			// Feedback as blockquote
+			lines := strings.Split(comment.Text, "\n")
+			for _, line := range lines {
+				sb.WriteString("> " + line + "\n")
 			}
+			sb.WriteString("\n")
 		}
 	}
 
@@ -97,7 +95,17 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 	return sb.String()
 }
 
-func findLineSnippet(f *diff.FileDiff, lineNum int) string {
+// formatLocation returns "file:line" or "file:start-end" for range comments.
+func formatLocation(filename string, c review.Comment) string {
+	if c.EndLine > 0 {
+		return fmt.Sprintf("%s:%d-%d", filename, c.Line, c.EndLine)
+	}
+	return fmt.Sprintf("%s:%d", filename, c.Line)
+}
+
+// findSnippet returns a Read()-style cat -n formatted snippet for a comment.
+// For single-line comments: radius=2 (5 lines). For range comments: full range + 1 line padding.
+func findSnippet(f *diff.FileDiff, c review.Comment) string {
 	if f == nil {
 		return ""
 	}
@@ -118,53 +126,49 @@ func findLineSnippet(f *diff.FileDiff, lineNum int) string {
 				e.num = pair.Left.OldNum
 				e.content = pair.Left.Content
 			}
-			if e.num > 0 && e.content != "" {
+			if e.num > 0 {
 				entries = append(entries, e)
 			}
 		}
 	}
 
-	const radius = 2
+	var startLine, endLine int
+	if c.EndLine > 0 {
+		// Range comment: full range + 1 line padding
+		startLine = c.Line - 1
+		endLine = c.EndLine + 1
+	} else {
+		// Single-line: radius of 2
+		startLine = c.Line - 2
+		endLine = c.Line + 2
+	}
+
+	// Find max line number for right-alignment
+	maxNum := 0
+	for _, e := range entries {
+		if e.num >= startLine && e.num <= endLine && e.num > maxNum {
+			maxNum = e.num
+		}
+	}
+	if maxNum == 0 {
+		return ""
+	}
+
+	// Determine width for right-aligned line numbers
+	numWidth := len(fmt.Sprintf("%d", maxNum))
+	if numWidth < 1 {
+		numWidth = 1
+	}
+
 	var snippet []string
 	for _, e := range entries {
-		if e.num < lineNum-radius || e.num > lineNum+radius {
+		if e.num < startLine || e.num > endLine {
 			continue
 		}
-		prefix := "  "
-		if e.num == lineNum {
-			prefix = ">>"
-		}
-		snippet = append(snippet, fmt.Sprintf("%s %4d | %s", prefix, e.num, e.content))
+		snippet = append(snippet, fmt.Sprintf("%*d\t%s", numWidth, e.num, e.content))
 	}
 
 	return strings.Join(snippet, "\n")
-}
-
-func classifyLine(f *diff.FileDiff, lineNum int) string {
-	if f == nil {
-		return "context"
-	}
-	for _, h := range f.Hunks {
-		for _, pair := range h.Pairs {
-			if pair.Right != nil && pair.Right.NewNum == lineNum {
-				switch pair.Right.Op {
-				case diff.OpInsert:
-					// If paired with a delete, it's a modification
-					if pair.Left != nil && pair.Left.Op == diff.OpDelete {
-						return "modified"
-					}
-					return "added"
-				case diff.OpEqual:
-					return "context"
-				}
-			}
-			// Also check old-side only lines (deletions)
-			if pair.Left != nil && pair.Right == nil && pair.Left.OldNum == lineNum {
-				return "deleted"
-			}
-		}
-	}
-	return "context"
 }
 
 func fileExtension(filename string) string {

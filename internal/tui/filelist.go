@@ -646,6 +646,31 @@ func (fl *fileList) revealTreePath(path string) error {
 	return nil
 }
 
+// clickAt maps a Y coordinate (relative to content area top) to a tree row
+// and selects it. Returns true if the selection changed to a file.
+func (fl *fileList) clickAt(y int) bool {
+	idx := fl.treeOffset + y
+	if idx < 0 || idx >= len(fl.treeRows) {
+		return false
+	}
+	row := fl.treeRows[idx]
+	if row.node.isDir {
+		// Toggle directory expand
+		fl.treeSelected = idx
+		if !row.node.expanded {
+			fl.ensureNodeLoaded(row.node)
+		}
+		row.node.expanded = !row.node.expanded
+		fl.rebuildTreeRows()
+		fl.ensureTreeVisible()
+		return false
+	}
+	fl.treeSelected = idx
+	fl.syncModifiedSelectionFromTree()
+	fl.ensureTreeVisible()
+	return true
+}
+
 func (fl *fileList) next() {
 	if fl.treeSelected >= len(fl.treeRows)-1 {
 		return

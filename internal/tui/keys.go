@@ -42,6 +42,7 @@ type keyMap struct {
 	SubmitComment     key.Binding
 	ToggleRelativeNum key.Binding
 	ViewGeneral       key.Binding
+	VisualMode        key.Binding
 }
 
 var keys = keyMap{
@@ -84,4 +85,5 @@ var keys = keyMap{
 	SubmitComment:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit comment")),
 	ToggleRelativeNum: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "toggle line nums")),
 	ViewGeneral:       key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "view general comments")),
+	VisualMode:        key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "visual select")),
 }

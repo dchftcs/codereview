@@ -31,6 +31,7 @@ const (
 	modeSaveAs
 	modeQuitConfirm
 	modeViewGeneral
+	modeVisual
 )
 
 // GitService is the narrow git surface needed by the TUI.
@@ -286,9 +287,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		text := strings.TrimRight(string(content), "\n")
 		if text != "" {
 			if m.diffView.commentEditing {
-				m.review.DeleteComment(m.diffView.commentFile, m.diffView.commentLineNum)
+				m.review.DeleteCommentRange(m.diffView.commentFile, m.diffView.commentLineNum, m.diffView.commentEndLine)
 			}
-			m.review.AddComment(m.diffView.commentFile, m.diffView.commentLineNum, text)
+			if m.diffView.commentEndLine > 0 {
+				m.review.AddRangeComment(m.diffView.commentFile, m.diffView.commentLineNum, m.diffView.commentEndLine, text)
+			} else {
+				m.review.AddComment(m.diffView.commentFile, m.diffView.commentLineNum, text)
+			}
 			m.dirty = true
 			m.diffView.deactivateComment()
 			m.diffView.buildRows()
@@ -331,6 +336,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == modeViewGeneral {
 			return m.updateViewGeneral(msg)
+		}
+		if m.mode == modeVisual {
+			return m.updateVisual(msg)
 		}
 		return m.updateNormal(msg)
 	}
@@ -612,6 +620,12 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case key.Matches(msg, keys.VisualMode):
+		m.mode = modeVisual
+		m.diffView.selectionAnchor = m.diffView.cursorY
+		m.diffView.selectionActive = true
+		return m, nil
+
 	case key.Matches(msg, keys.Comment):
 		file, ok := m.currentReviewFileName()
 		if !ok {
@@ -642,16 +656,25 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		lineNum := m.diffView.currentLineNum()
-		if m.review.FindComment(file, lineNum) != nil {
+		if c := m.diffView.commentAtCursor(); c != nil {
+			m.review.DeleteCommentRange(c.File, c.Line, c.EndLine)
 			m.dirty = true
+			m.diffView.buildRows()
+		} else if m.review.FindComment(file, lineNum) != nil {
+			m.review.DeleteComment(file, lineNum)
+			m.dirty = true
+			m.diffView.buildRows()
 		}
-		m.review.DeleteComment(file, lineNum)
-		m.diffView.buildRows()
 
 	case key.Matches(msg, keys.EditComment):
 		file, ok := m.currentReviewFileName()
 		if !ok {
 			break
+		}
+		if c := m.diffView.commentAtCursor(); c != nil {
+			m.mode = modeComment
+			m.diffView.activateEditRangeComment(file, c.Line, c.EndLine, c.Text)
+			return m, m.diffView.commentInput.Focus()
 		}
 		lineNum := m.diffView.currentLineNum()
 		if c := m.review.FindComment(file, lineNum); c != nil {
@@ -753,6 +776,95 @@ func (m *Model) consumeCount() int {
 	return n
 }
 
+func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = ""
+	k := msg.String()
+
+	// Handle 'gg' sequence
+	if m.pendingG {
+		m.pendingG = false
+		if k == "g" {
+			count := m.consumeCount()
+			if count > 1 {
+				m.diffView.moveCursorTo(count - 1)
+			} else {
+				m.diffView.moveCursorTo(0)
+			}
+			return m, nil
+		}
+		m.countBuf = ""
+	}
+
+	// Accumulate digit prefix
+	if len(k) == 1 && k[0] >= '1' && k[0] <= '9' && m.countBuf == "" {
+		m.countBuf = k
+		return m, nil
+	}
+	if len(k) == 1 && k[0] >= '0' && k[0] <= '9' && m.countBuf != "" {
+		m.countBuf += k
+		return m, nil
+	}
+
+	if k == "g" {
+		m.pendingG = true
+		return m, nil
+	}
+
+	count := m.consumeCount()
+	if k == "G" {
+		if count > 1 {
+			m.diffView.moveCursorTo(count - 1)
+		} else {
+			m.diffView.moveCursorTo(len(m.diffView.rows) - 1)
+		}
+		return m, nil
+	}
+
+	switch {
+	case key.Matches(msg, keys.Cancel) || key.Matches(msg, keys.VisualMode):
+		m.mode = modeNormal
+		m.diffView.selectionActive = false
+		return m, nil
+
+	case key.Matches(msg, keys.Down):
+		m.diffView.moveCursor(count)
+	case key.Matches(msg, keys.Up):
+		m.diffView.moveCursor(-count)
+	case key.Matches(msg, keys.ScreenTop):
+		m.diffView.moveCursorToViewportTop()
+	case key.Matches(msg, keys.ScreenBottom):
+		m.diffView.moveCursorToViewportBottom()
+	case key.Matches(msg, keys.FullPageDown):
+		m.diffView.moveCursor(count * m.diffView.contentViewportHeight())
+	case key.Matches(msg, keys.FullPageUp):
+		m.diffView.moveCursor(-count * m.diffView.contentViewportHeight())
+	case key.Matches(msg, keys.HalfPageDown):
+		m.diffView.moveCursor(count * m.diffView.height / 2)
+	case key.Matches(msg, keys.HalfPageUp):
+		m.diffView.moveCursor(-count * m.diffView.height / 2)
+
+	case key.Matches(msg, keys.Comment):
+		file, ok := m.currentReviewFileName()
+		if !ok {
+			break
+		}
+		startLine, endLine := m.diffView.selectionLineRange()
+		if startLine == 0 {
+			break
+		}
+		m.diffView.selectionActive = false
+		m.mode = modeComment
+		if startLine == endLine {
+			m.diffView.activateComment(file, startLine)
+		} else {
+			m.diffView.activateRangeComment(file, startLine, endLine)
+		}
+		return m, m.diffView.commentInput.Focus()
+	}
+
+	return m, nil
+}
+
 func (m Model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Cancel):
@@ -782,9 +894,13 @@ func (m Model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		text := strings.TrimSpace(m.diffView.commentValue())
 		if text != "" {
 			if m.diffView.commentEditing {
-				m.review.DeleteComment(m.diffView.commentFile, m.diffView.commentLineNum)
+				m.review.DeleteCommentRange(m.diffView.commentFile, m.diffView.commentLineNum, m.diffView.commentEndLine)
 			}
-			m.review.AddComment(m.diffView.commentFile, m.diffView.commentLineNum, text)
+			if m.diffView.commentEndLine > 0 {
+				m.review.AddRangeComment(m.diffView.commentFile, m.diffView.commentLineNum, m.diffView.commentEndLine, text)
+			} else {
+				m.review.AddComment(m.diffView.commentFile, m.diffView.commentLineNum, text)
+			}
 			m.dirty = true
 			m.diffView.deactivateComment()
 			m.diffView.buildRows()
@@ -1192,6 +1308,7 @@ func (m Model) helpView() string {
 		{"o", "Open/close selected directory"},
 		{"< / >", "Shrink / grow file panel"},
 		{"h / l", "Previous / next commit"},
+		{"V", "Visual select (then c to comment)"},
 		{"c", "Add inline comment at cursor"},
 		{"R", "Add general comment (multi-line)"},
 		{"Ctrl+r", "View/manage general comments"},
@@ -1343,9 +1460,12 @@ func (m Model) renderFooter() string {
 		commentParts = append(commentParts, fmt.Sprintf("%d general", gc))
 	}
 	commentCount := strings.Join(commentParts, ", ")
-	footerPrimary := footerStyle.MaxWidth(m.width).Render(
-		fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `c`comment `R`general `^r`view `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
-			modeStr))
+	footerHints := fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `V`visual `c`comment `R`general `^r`view `d/E`del/edit `tab`%s `e`expand `s`save `q`quit `?`help",
+		modeStr)
+	if m.mode == modeVisual {
+		footerHints = " -- VISUAL -- j/k move  c comment on selection  Esc cancel"
+	}
+	footerPrimary := footerStyle.MaxWidth(m.width).Render(footerHints)
 	dividerWidth := m.width
 	if dividerWidth < 1 {
 		dividerWidth = 1

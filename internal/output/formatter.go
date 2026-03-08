@@ -83,7 +83,8 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 				sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n", ext, snippet))
 			}
 
-			// Feedback as blockquote
+			// Reviewer comment
+			sb.WriteString("**Comment:**\n")
 			lines := strings.Split(comment.Text, "\n")
 			for _, line := range lines {
 				sb.WriteString("> " + line + "\n")

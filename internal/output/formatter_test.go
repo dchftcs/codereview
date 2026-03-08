@@ -78,6 +78,7 @@ func TestFormatMarkdownDeterministicFileOrderingAndInlineBlocks(t *testing.T) {
 	mustContain(t, out, "3\tzadded")
 
 	// Feedback as blockquotes
+	mustContain(t, out, "**Comment:**")
 	mustContain(t, out, "> modified line comment")
 	mustContain(t, out, "> context line comment")
 	mustContain(t, out, "> no file context")
@@ -138,6 +139,7 @@ func TestFormatMarkdownRangeComment(t *testing.T) {
 	mustContain(t, out, "26\tline content") // 1 line after
 
 	// Feedback as blockquote
+	mustContain(t, out, "**Comment:**")
 	mustContain(t, out, "> this whole block needs refactoring")
 }
 
@@ -195,6 +197,7 @@ func TestFormatMarkdownMissingFileContextNoCodeBlock(t *testing.T) {
 	out := FormatMarkdown(rev, nil)
 
 	mustContain(t, out, "### `missing.go:42`")
+	mustContain(t, out, "**Comment:**")
 	mustContain(t, out, "> x")
 	if strings.Contains(out, "```") {
 		t.Fatalf("expected no code fence when file context is missing, got:\n%s", out)

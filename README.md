@@ -94,30 +94,26 @@ Pressing `s` outputs a markdown document (to stdout or a file with `-o`) structu
 
 ## File: `src/auth.go`
 
-Inline comments: 2
-
-### Comment 1
-- Location: line 42 (added)
-- Snippet:
+### `src/auth.go:42`
 ```go
-     40 | func isAllowed(user User) bool {
-     41 |     // ...
->>   42 | if user.IsAdmin() {
-     43 |     return true
-     44 | }
+40	func isAllowed(user User) bool {
+41		// ...
+42	if user.IsAdmin() {
+43		return true
+44	}
 ```
-- Feedback: This check is missing rate limiting.
+**Comment:**
+> This check is missing rate limiting.
 
-### Comment 2
-- Location: line 78 (modified)
-- Snippet:
+### `src/auth.go:78`
 ```go
-     76 | func validateToken(t string) bool {
-     77 |     // TODO: signature + expiry validation
->>   78 |     return len(t) > 0
-     79 | }
+76	func validateToken(t string) bool {
+77		// TODO: signature + expiry validation
+78		return len(t) > 0
+79	}
 ```
-- Feedback: Token validation should check signature and expiry.
+**Comment:**
+> Token validation should check signature and expiry.
 
 ## General Comments
 
@@ -126,12 +122,8 @@ Add tests for invalid/expired tokens.
 
 Inline comments are grouped by file, files are sorted alphabetically, and comments are sorted by line number.  
 `REVIEW.md` includes a **Diff Context** section that defines LHS/RHS and whether RHS includes staged/unstaged/untracked changes.  
-Inline comment locations are diff-view-relative (`file:line` / `file:start-end` against that LHS/RHS context), followed by a snippet and feedback text.  
-If no snippet can be resolved from the current diff context, output uses:
-
-```markdown
-- Snippet: unavailable in current diff context
-```
+Inline comment locations are diff-view-relative (`file:line` / `file:start-end` against that LHS/RHS context), followed by an optional snippet and a labeled `Comment` block.  
+If no snippet can be resolved from the current diff context, only the location and `Comment` block are emitted.
 
 ## Requirements
 

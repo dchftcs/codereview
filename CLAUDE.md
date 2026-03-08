@@ -37,7 +37,7 @@ internal/
   tui/bottombar.go          Reusable bottom-bar text input (used for general comments)
   tui/keys.go               Key bindings
   tui/styles.go             Lipgloss color/style definitions (Dracula-based palette)
-  output/formatter.go       Markdown output with file grouping, line context, classification
+  output/formatter.go       Markdown output with file grouping, line context snippets, and labeled comments
 ```
 
 ## Key Design Decisions
@@ -50,12 +50,12 @@ internal/
 - **Side-by-side alignment**: `alignPairs()` in `parser.go` pairs consecutive delete+insert sequences. Unpaired deletes/inserts get `nil` on the other side.
 - **Soft-wrapped diff lines**: Long lines are soft-wrapped in both side-by-side and unified modes. Rendering keeps a screen-line to logical-row map so mouse clicks and `H`/`L` still resolve to the correct logical row.
 - **Mouse support**: Enabled via `tea.WithMouseCellMotion()`. Left-click in the file list selects a file (or toggles a directory); left-click in the diff view moves the cursor. Click-and-drag in the diff panel creates a visual selection: press sets the anchor, motion enters `modeVisual` and extends the selection, release finalizes it. A plain click (no drag) cancels any active visual selection. `handleMouseClick()` sets `mouseDrag` state on diff panel clicks; `handleMouseDrag()` enters visual mode when the mouse moves to a different row. `handleMouseClick()` in `app.go` maps screen coordinates to panel-relative positions using header height and panel borders.
-- **Per-file state preservation**: `fileStates map[int]fileState` on `Model` saves/restores scroll, cursor, and comment input state per file index. `expandedSet map[int]bool` tracks expand mode per file. State is saved before switching files (`]`/`[`/`←`/`→`) and restored on return. Both maps are reset on commit navigation.
+- **Per-file state preservation**: `fileStates map[string]fileState` on `Model` saves/restores scroll, cursor, and comment input state per selection key. `expandedSet map[int]bool` tracks expand mode per modified file index. State is saved before switching files and restored on return. Both maps are reset on commit navigation.
 - **Expand/collapse stability invariant**: toggling `e` must preserve both (1) the anchored diff row identity (not just a raw line number) and (2) the cursor's on-screen row when feasible. Keep-position transitions should not apply normal scroll-margin nudging.
 - **Multi-line comments via textarea**: Both inline and general comment input use `textarea.Model` (not `textinput.Model`). Enter inserts newlines; `ctrl+s` submits; `ctrl+g` opens `$EDITOR` (falls back to `$VISUAL`, then `vi`) via `tea.ExecProcess`. The bottom bar still uses `textinput.Model` for single-line prompts (search, save-as, etc.).
 - **General comments panel**: General comments are shown in a persistent panel below the diff body. `ctrl+r` focuses that panel, where `j/k` scroll, `d` clears, and `E` edits the text. `R` opens the general comment editor (prefilled when text exists).
 - **Editor integration**: `ctrl+g` writes current text to a temp file, spawns the editor, reads back on exit, and cleans up. Both inline comments (`editorFinishedMsg`) and general comments (`generalEditorFinishedMsg`) have their own message types.
-- **Context menu (`Shift+click`)**: `modeContextMenu` renders a small menu box at the click position via character-level overlay (`overlayAt()`). Uses Shift+left-click rather than right-click because most terminal emulators intercept right-click for their own paste menu. The `MouseMsg.Shift` bool distinguishes a plain click (cursor/selection) from a menu-opening click. Menu items vary by panel: diff panel offers "Add comment" and "Copy line" (`atotto/clipboard`); file list offers "Toggle expand". `j`/`k`/`Enter` navigate and select; any other key or click-outside dismisses. All state lives in `ctxMenu contextMenu` on `Model`. Styles use purple rounded border with blue highlight for the selected item.
+- **Context menu (`Shift+click`)**: `modeContextMenu` renders a small menu box at the click position via character-level overlay (`overlayAt()`). Uses Shift+left-click rather than right-click because most terminal emulators intercept right-click for their own paste menu. The `MouseMsg.Shift` bool distinguishes a plain click (cursor/selection) from a menu-opening click. Menu items vary by panel: diff panel offers "Add comment" and "Copy line" (`atotto/clipboard`); file list offers "Mark read"/"Mark unread" toggle for file rows. `j`/`k`/`Enter` navigate and select; any other key or click-outside dismisses. All state lives in `ctxMenu contextMenu` on `Model`. Styles use purple rounded border with blue highlight for the selected item.
 
 ## Conventions
 
@@ -74,7 +74,7 @@ internal/
 - For expand/collapse transitions, use the keep-position path and keep-position clamping (not the normal margin-enforcing scroll path), or you'll regress stable-location behavior.
 - Inline comment input lives in `diffView` (not the bottom bar). General comment input uses a dedicated `generalInput textarea.Model` rendered in the general panel area. The bottom bar (`bottomBarInput`) is only for single-line prompts (search, save-as, etc.).
 - `GeneralComments` is serialized as `[]string`, but the app treats it as a single free-form text block (`GeneralComment()` helper). Formatter emits it as plain text under `## General Comments`.
-- Arrow keys `←`/`→` are bound to file navigation (`PrevFile`/`NextFile`), not commit navigation. Commit navigation uses only `h`/`l`.
+- Arrow keys `←`/`→` are bound to unread-only file navigation (`PrevUnreadFile`/`NextUnreadFile`), while `[`/`]` include read files. Commit navigation uses only `h`/`l`.
 - The inline comment `commentInput` is a `textarea.Model`, not a `textinput.Model`. Submit is `ctrl+s`, bound as `keys.SubmitComment`, not `Enter` (`keys.Submit`).
 - General comment input (`modeGeneralComment`) uses `generalInput textarea.Model` on `Model`, not the bottom bar.
 - The context menu uses Shift+left-click, not right-click. Right-click is intercepted by most terminal emulators (paste menu), so `MouseMsg` with `Button == MouseButtonRight` is unreliable. `MouseMsg.Shift` on a left-click is reliably passed through via SGR mouse encoding.

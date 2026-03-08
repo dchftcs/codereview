@@ -194,6 +194,22 @@ func TestSideBySideShowsRelativeNumbersOnBothSides(t *testing.T) {
 	}
 }
 
+func TestPrefixFirstLineOnly(t *testing.T) {
+	t.Parallel()
+
+	in := []string{"a", "b", "c"}
+	got := prefixFirstLineOnly(in, "  0 ")
+	want := []string{"  0 a", "    b", "    c"}
+	if len(got) != len(want) {
+		t.Fatalf("len(prefixFirstLineOnly)=%d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func makeLargeFileDiff(lines int) *diff.FileDiff {
 	pairs := make([]diff.LinePair, 0, lines)
 	for i := 1; i <= lines; i++ {

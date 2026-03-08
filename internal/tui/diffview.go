@@ -713,7 +713,8 @@ func (dv *diffView) renderSideBySideContent() string {
 			}
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			rowLines = splitRenderedLines(relPrefix + commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
+			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
+			rowLines = append(rowLines, prefixFirstLineOnly(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
 			leftLines := dv.renderSideWrapped(pair.Left, colWidth, true)
@@ -766,7 +767,8 @@ func (dv *diffView) renderSideBySideContent() string {
 		}
 
 		if isCursor && dv.commentActive {
-			for _, il := range splitRenderedLines(dv.renderInlineInput()) {
+			inlineLines := prefixFirstLineOnly(splitRenderedLines(dv.renderInlineInput()), relPrefix)
+			for _, il := range inlineLines {
 				if len(lines) >= viewportHeight {
 					break
 				}
@@ -903,7 +905,8 @@ func (dv *diffView) renderUnifiedContent() string {
 			}
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			rowLines = splitRenderedLines(relPrefix + commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
+			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
+			rowLines = append(rowLines, prefixFirstLineOnly(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
 			var rendered []string
@@ -949,7 +952,8 @@ func (dv *diffView) renderUnifiedContent() string {
 		}
 
 		if isCursor && dv.commentActive {
-			for _, il := range splitRenderedLines(dv.renderInlineInput()) {
+			inlineLines := prefixFirstLineOnly(splitRenderedLines(dv.renderInlineInput()), relPrefix)
+			for _, il := range inlineLines {
 				if len(lines) >= viewportHeight {
 					break
 				}
@@ -1124,6 +1128,24 @@ func formatCommentBubble(c *review.Comment) string {
 		return fmt.Sprintf("💬 [lines %d-%d] %s", c.Line, c.EndLine, c.Text)
 	}
 	return "💬 " + c.Text
+}
+
+// prefixFirstLineOnly prepends the gutter prefix on the first rendered line only.
+// Continuation lines get blank gutter space so line numbers do not repeat.
+func prefixFirstLineOnly(lines []string, prefix string) []string {
+	if prefix == "" {
+		return lines
+	}
+	out := make([]string, 0, len(lines))
+	blank := strings.Repeat(" ", lipgloss.Width(prefix))
+	for i, l := range lines {
+		if i == 0 {
+			out = append(out, prefix+l)
+			continue
+		}
+		out = append(out, blank+l)
+	}
+	return out
 }
 
 func truncate(s string, maxWidth int) string {

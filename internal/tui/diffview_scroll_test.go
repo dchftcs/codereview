@@ -194,19 +194,38 @@ func TestSideBySideShowsRelativeNumbersOnBothSides(t *testing.T) {
 	}
 }
 
-func TestPrefixFirstLineOnly(t *testing.T) {
+func TestPrefixBlankGutter(t *testing.T) {
 	t.Parallel()
 
 	in := []string{"a", "b", "c"}
-	got := prefixFirstLineOnly(in, "  0 ")
-	want := []string{"  0 a", "    b", "    c"}
+	got := prefixBlankGutter(in, "  0 ")
+	want := []string{"    a", "    b", "    c"}
 	if len(got) != len(want) {
-		t.Fatalf("len(prefixFirstLineOnly)=%d, want %d", len(got), len(want))
+		t.Fatalf("len(prefixBlankGutter)=%d, want %d", len(got), len(want))
 	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("line %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestRelativeNumbersDoNotAdvanceAcrossCommentRows(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 8
+	rev := review.New()
+	rev.AddComment("x.go", 1, "note")
+	dv.setFile(makeLargeFileDiff(2), rev)
+	dv.cursorY = 1 // first diff row (line 1)
+
+	if got := dv.relativeNumStr(2); got != "  0" {
+		t.Fatalf("comment row relative = %q, want %q", got, "  0")
+	}
+	if got := dv.relativeNumStr(3); got != "  1" {
+		t.Fatalf("next diff row relative = %q, want %q", got, "  1")
 	}
 }
 

@@ -40,6 +40,8 @@ type diffView struct {
 	comments  *review.Review
 	// Flattened rows for scrolling
 	rows []diffRow
+	// Logical row ordinals used for relative numbering; only diff rows advance.
+	rowOrdinals []int
 	// Maps currently rendered screen lines to logical row indices.
 	visibleRowMap []int
 	// Inline comment input
@@ -140,7 +142,14 @@ func (dv *diffView) relativeNumStr(rowIdx int) string {
 	if rowIdx == dv.cursorY {
 		return "  0"
 	}
-	dist := rowIdx - dv.cursorY
+	if rowIdx < 0 || rowIdx >= len(dv.rowOrdinals) || dv.cursorY < 0 || dv.cursorY >= len(dv.rowOrdinals) {
+		dist := rowIdx - dv.cursorY
+		if dist < 0 {
+			dist = -dist
+		}
+		return fmt.Sprintf("%3d", dist)
+	}
+	dist := dv.rowOrdinals[rowIdx] - dv.rowOrdinals[dv.cursorY]
 	if dist < 0 {
 		dist = -dist
 	}
@@ -267,6 +276,7 @@ func (dv *diffView) findBestAnchorRow(anchor diffRowAnchor, fallbackLineNum int,
 
 func (dv *diffView) buildRows() {
 	dv.rows = nil
+	dv.rowOrdinals = nil
 	dv.visibleRowMap = nil
 	if dv.file == nil {
 		return
@@ -317,6 +327,15 @@ func (dv *diffView) buildRows() {
 				}
 			}
 		}
+	}
+
+	ordinal := 0
+	dv.rowOrdinals = make([]int, len(dv.rows))
+	for i, row := range dv.rows {
+		if row.kind == rowDiffPair {
+			ordinal++
+		}
+		dv.rowOrdinals[i] = ordinal
 	}
 }
 
@@ -714,7 +733,7 @@ func (dv *diffView) renderSideBySideContent() string {
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
 			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
-			rowLines = append(rowLines, prefixFirstLineOnly(commentLines, relPrefix)...)
+			rowLines = append(rowLines, prefixBlankGutter(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
 			leftLines := dv.renderSideWrapped(pair.Left, colWidth, true)
@@ -767,7 +786,7 @@ func (dv *diffView) renderSideBySideContent() string {
 		}
 
 		if isCursor && dv.commentActive {
-			inlineLines := prefixFirstLineOnly(splitRenderedLines(dv.renderInlineInput()), relPrefix)
+			inlineLines := prefixBlankGutter(splitRenderedLines(dv.renderInlineInput()), relPrefix)
 			for _, il := range inlineLines {
 				if len(lines) >= viewportHeight {
 					break
@@ -906,7 +925,7 @@ func (dv *diffView) renderUnifiedContent() string {
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
 			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
-			rowLines = append(rowLines, prefixFirstLineOnly(commentLines, relPrefix)...)
+			rowLines = append(rowLines, prefixBlankGutter(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
 			var rendered []string
@@ -952,7 +971,7 @@ func (dv *diffView) renderUnifiedContent() string {
 		}
 
 		if isCursor && dv.commentActive {
-			inlineLines := prefixFirstLineOnly(splitRenderedLines(dv.renderInlineInput()), relPrefix)
+			inlineLines := prefixBlankGutter(splitRenderedLines(dv.renderInlineInput()), relPrefix)
 			for _, il := range inlineLines {
 				if len(lines) >= viewportHeight {
 					break
@@ -1130,19 +1149,15 @@ func formatCommentBubble(c *review.Comment) string {
 	return "💬 " + c.Text
 }
 
-// prefixFirstLineOnly prepends the gutter prefix on the first rendered line only.
-// Continuation lines get blank gutter space so line numbers do not repeat.
-func prefixFirstLineOnly(lines []string, prefix string) []string {
+// prefixBlankGutter prepends blank gutter space for rendered multi-line blocks.
+// The gutter width is preserved, but no line number is shown.
+func prefixBlankGutter(lines []string, prefix string) []string {
 	if prefix == "" {
 		return lines
 	}
 	out := make([]string, 0, len(lines))
 	blank := strings.Repeat(" ", lipgloss.Width(prefix))
-	for i, l := range lines {
-		if i == 0 {
-			out = append(out, prefix+l)
-			continue
-		}
+	for _, l := range lines {
 		out = append(out, blank+l)
 	}
 	return out

@@ -1716,8 +1716,22 @@ func (m Model) renderFooter() string {
 		dividerWidth = 1
 	}
 	footerDivider := footerStyle.MaxWidth(m.width).Render(strings.Repeat("─", dividerWidth))
-	navInfo := fmt.Sprintf(" `f`find `p`content `]/[`next/prev `←/→`unread `m`read `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
-		fileMode, fileCount, commentCount)
+	navParts := []string{
+		"`f`find",
+		"`p`content",
+		"`]/[`next/prev",
+		"`←/→`next/prev(unread)",
+		"`m`toggle read",
+		"`h/l`commit",
+		"`e`expand",
+		"`t`changed/all",
+	}
+	if m.fileList.mode == fileListModeFullTree {
+		navParts = append(navParts, "`}/{`modified", "`M`first-modified", "`o`dir")
+	}
+	navParts = append(navParts, "`</>`resize")
+	navInfo := fmt.Sprintf(" %s  [%s] %s  %s",
+		strings.Join(navParts, " "), fileMode, fileCount, commentCount)
 	if m.statusMsg != "" {
 		navInfo += "  " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)
 	}

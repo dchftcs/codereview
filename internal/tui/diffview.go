@@ -593,7 +593,7 @@ func (dv *diffView) toggleMode() {
 
 func (dv *diffView) newCommentTextarea() textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
+	ta.Placeholder = "Enter comment..."
 	ta.CharLimit = 2000
 	ta.SetWidth(dv.width - 12)
 	ta.SetHeight(3)
@@ -1075,8 +1075,9 @@ func (dv *diffView) renderInlineInput() string {
 		labelText = fmt.Sprintf(" Comment on line %d: ", dv.commentLineNum)
 	}
 	label := commentPromptStyle.Render(labelText)
+	hint := lipgloss.NewStyle().Foreground(colorDim).Render("ctrl+s submit | enter newline | ctrl+g editor | esc cancel")
 	input := dv.commentInput.View()
-	content := label + "\n" + input
+	content := label + hint + "\n" + input
 	return commentBorderStyle.Width(dv.width - 6).Render(content)
 }
 

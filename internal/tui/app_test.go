@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -133,6 +134,35 @@ func TestFileListContextMenuMarkReadUnread(t *testing.T) {
 	}
 }
 
+func TestFooterNavigationHintsAdaptToFileMode(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.width = 260
+	changedFooter := stripAnsi(m.renderFooter())
+	if !strings.Contains(changedFooter, "`←/→`next/prev(unread)") {
+		t.Fatalf("changed footer missing unread hint: %q", changedFooter)
+	}
+	if !strings.Contains(changedFooter, "`m`toggle read") {
+		t.Fatalf("changed footer missing toggle-read hint: %q", changedFooter)
+	}
+	if strings.Contains(changedFooter, "`}/{`modified") {
+		t.Fatalf("changed footer should not show modified hint: %q", changedFooter)
+	}
+	if strings.Contains(changedFooter, "`o`dir") {
+		t.Fatalf("changed footer should not show dir hint: %q", changedFooter)
+	}
+
+	m.fileList.mode = fileListModeFullTree
+	allFooter := stripAnsi(m.renderFooter())
+	if !strings.Contains(allFooter, "`}/{`modified") {
+		t.Fatalf("all-files footer missing modified hint: %q", allFooter)
+	}
+	if !strings.Contains(allFooter, "`o`dir") {
+		t.Fatalf("all-files footer missing dir hint: %q", allFooter)
+	}
+}
+
 func TestInlineCommentModeSubmitAndCancel(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +172,13 @@ func TestInlineCommentModeSubmitAndCancel(t *testing.T) {
 
 	if m.mode != modeComment || !m.diffView.commentActive {
 		t.Fatalf("expected inline comment mode active, mode=%v active=%v", m.mode, m.diffView.commentActive)
+	}
+	if strings.Contains(strings.ToLower(m.diffView.commentInput.Placeholder), "ctrl+s") {
+		t.Fatalf("inline placeholder should not contain key hints: %q", m.diffView.commentInput.Placeholder)
+	}
+	inlineHeader := stripAnsi(m.diffView.renderInlineInput())
+	if !strings.Contains(inlineHeader, "ctrl+s submit") {
+		t.Fatalf("inline header missing key hint: %q", inlineHeader)
 	}
 
 	m = typeText(m, "looks good")

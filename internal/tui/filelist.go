@@ -48,6 +48,7 @@ type fileList struct {
 	treeRows      []treeRow
 	treeSelected  int
 	treeOffset    int
+	readSet       map[string]bool
 }
 
 func newFileList(files []diff.FileDiff) fileList {
@@ -60,6 +61,7 @@ func newFileList(files []diff.FileDiff) fileList {
 		mode:          fileListModeModifiedTree,
 		repoRoot:      root,
 		modifiedIndex: make(map[string]int, len(files)),
+		readSet:       make(map[string]bool),
 		root: &treeNode{
 			name:     filepath.Base(root),
 			absPath:  root,
@@ -91,6 +93,28 @@ func (fl *fileList) filePathForIndex(i int) string {
 
 func (fl *fileList) selectedDiffPath() string {
 	return fl.filePathForIndex(fl.selected)
+}
+
+func (fl *fileList) isPathRead(path string) bool {
+	path = filepath.ToSlash(path)
+	return fl.readSet[path]
+}
+
+func (fl *fileList) toggleReadSelected() (read bool, ok bool) {
+	path, isDir, exists := fl.selectedTreePath()
+	if !exists || isDir {
+		return false, false
+	}
+	path = filepath.ToSlash(path)
+	if fl.readSet == nil {
+		fl.readSet = make(map[string]bool)
+	}
+	if fl.readSet[path] {
+		delete(fl.readSet, path)
+		return false, true
+	}
+	fl.readSet[path] = true
+	return true, true
 }
 
 func (fl *fileList) modifiedFileAtPath(path string) (*diff.FileDiff, int, bool) {
@@ -692,6 +716,24 @@ func (fl *fileList) next() {
 	fl.ensureTreeVisible()
 }
 
+func (fl *fileList) nextUnread() bool {
+	for i := fl.treeSelected + 1; i < len(fl.treeRows); i++ {
+		row := fl.treeRows[i]
+		if row.node.isDir {
+			continue
+		}
+		path := fl.treePath(row.node)
+		if fl.isPathRead(path) {
+			continue
+		}
+		fl.treeSelected = i
+		fl.syncModifiedSelectionFromTree()
+		fl.ensureTreeVisible()
+		return true
+	}
+	return false
+}
+
 func (fl *fileList) prev() {
 	if fl.treeSelected <= 0 {
 		return
@@ -711,6 +753,24 @@ func (fl *fileList) prev() {
 	fl.treeSelected--
 	fl.syncModifiedSelectionFromTree()
 	fl.ensureTreeVisible()
+}
+
+func (fl *fileList) prevUnread() bool {
+	for i := fl.treeSelected - 1; i >= 0; i-- {
+		row := fl.treeRows[i]
+		if row.node.isDir {
+			continue
+		}
+		path := fl.treePath(row.node)
+		if fl.isPathRead(path) {
+			continue
+		}
+		fl.treeSelected = i
+		fl.syncModifiedSelectionFromTree()
+		fl.ensureTreeVisible()
+		return true
+	}
+	return false
 }
 
 func (fl *fileList) ensureVisible() {
@@ -778,6 +838,7 @@ func (fl *fileList) viewTree(width int) string {
 			}
 		}
 		rel := fl.treePath(row.node)
+		read := !row.node.isDir && fl.isPathRead(rel)
 		modIdx := -1
 		modified := false
 		if idx, ok := fl.modifiedIndex[rel]; ok && !row.node.isDir {
@@ -823,18 +884,34 @@ func (fl *fileList) viewTree(width int) string {
 				marker = "??"
 				markerStyle = lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
 			}
-			label = markerStyle.Render(marker+label) + stat
+			if read {
+				label = marker + label + stat
+			} else {
+				label = markerStyle.Render(marker+label) + stat
+			}
 		} else {
 			label = "  " + label
 		}
 		if commentMarker != "" {
-			label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
+			if read {
+				label += commentMarker
+			} else {
+				label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
+			}
 		}
 
 		if i == fl.treeSelected {
-			label = selectedFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
+			style := selectedFileStyle
+			if read {
+				style = style.Strikethrough(true)
+			}
+			label = style.Width(maxW).MaxWidth(maxW).Render(label)
 		} else {
-			label = normalFileStyle.Width(maxW).MaxWidth(maxW).Render(label)
+			style := normalFileStyle
+			if read {
+				style = style.Strikethrough(true)
+			}
+			label = style.Width(maxW).MaxWidth(maxW).Render(label)
 		}
 		lines = append(lines, label)
 	}

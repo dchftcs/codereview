@@ -173,7 +173,9 @@ Usage:
 
 Keys:
   j/k, ↑/↓       Scroll up/down through diff
-  ]/[, →/←       Next/previous file
+  ]/[            Next/previous file (includes read)
+  →/←            Next/previous unread file
+  m              Mark selected file read/unread
   h/l            Previous/next commit
   c              Enter comment mode at current line
   R              Edit general comment (single text block)

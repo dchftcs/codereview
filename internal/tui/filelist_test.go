@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dc/codereview/internal/diff"
@@ -180,6 +181,68 @@ func TestFocusPathSwitchesToTreeForReferenceFiles(t *testing.T) {
 	}
 	if path != "dir/ref.txt" {
 		t.Fatalf("selected path = %q, want %q", path, "dir/ref.txt")
+	}
+}
+
+func TestUnreadNavigationAndClickOnReadFile(t *testing.T) {
+	t.Parallel()
+
+	fl := newFileList([]diff.FileDiff{
+		{NewName: "a.go"},
+		{NewName: "b.go"},
+		{NewName: "c.go"},
+	})
+
+	// Select b.go and mark read.
+	fl.next()
+	read, ok := fl.toggleReadSelected()
+	if !ok || !read {
+		t.Fatalf("toggleReadSelected() = (read=%v, ok=%v), want (true, true)", read, ok)
+	}
+
+	// nextUnread from a.go should skip b.go and land on c.go.
+	fl.prev()
+	if !fl.nextUnread() {
+		t.Fatal("nextUnread returned false")
+	}
+	if got := fl.selectedDiffPath(); got != "c.go" {
+		t.Fatalf("selected after nextUnread = %q, want c.go", got)
+	}
+
+	// prevUnread from c.go should skip b.go and land on a.go.
+	if !fl.prevUnread() {
+		t.Fatal("prevUnread returned false")
+	}
+	if got := fl.selectedDiffPath(); got != "a.go" {
+		t.Fatalf("selected after prevUnread = %q, want a.go", got)
+	}
+
+	// Clicking read file should still select it.
+	if changed := fl.clickAt(1); !changed {
+		t.Fatal("clickAt on read file did not report selection change")
+	}
+	if got := fl.selectedDiffPath(); got != "b.go" {
+		t.Fatalf("selected after clickAt = %q, want b.go", got)
+	}
+}
+
+func TestMarkedReadFileNameRemainsStableInView(t *testing.T) {
+	t.Parallel()
+
+	fl := newFileList([]diff.FileDiff{
+		{NewName: "alpha.go"},
+		{NewName: "beta.go"},
+	})
+	fl.height = 4
+
+	fl.next() // beta.go
+	if _, ok := fl.toggleReadSelected(); !ok {
+		t.Fatal("toggleReadSelected returned ok=false")
+	}
+
+	rendered := stripAnsi(fl.view(40))
+	if !strings.Contains(rendered, "beta.go") {
+		t.Fatalf("rendered file list missing beta.go after mark-read: %q", rendered)
 	}
 }
 

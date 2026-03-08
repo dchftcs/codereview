@@ -34,13 +34,31 @@ func (m Model) handleRightClick(x, y int) (tea.Model, tea.Cmd) {
 
 	// File list panel
 	if x <= m.fileListWidth+1 {
+		idx := m.fileList.treeOffset + bodyY
+		if idx < 0 || idx >= len(m.fileList.treeRows) {
+			return m, nil
+		}
+		m.fileList.treeSelected = idx
+		m.fileList.syncModifiedSelectionFromTree()
+		m.fileList.ensureTreeVisible()
+
+		row := m.fileList.treeRows[idx]
+		if row.node.isDir {
+			return m, nil
+		}
+		label := "Mark read"
+		if m.fileList.isPathRead(m.fileList.treePath(row.node)) {
+			label = "Mark unread"
+		}
+		items := []contextMenuItem{
+			{label: label, action: "toggle_read"},
+		}
+
 		m.ctxMenu = contextMenu{
-			x:     x,
-			y:     y,
-			panel: "filelist",
-			items: []contextMenuItem{
-				{label: "Toggle expand", action: "toggle_expand"},
-			},
+			x:        x,
+			y:        y,
+			panel:    "filelist",
+			items:    items,
 			selected: 0,
 		}
 		m.mode = modeContextMenu
@@ -170,20 +188,15 @@ func (m Model) executeContextMenuItem() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "toggle_expand":
-		_, idx, ok := m.fileList.modifiedSelection()
+	case "toggle_read":
+		read, ok := m.fileList.toggleReadSelected()
 		if !ok {
 			return m, nil
 		}
-		m.expandedSet[idx] = !m.expandedSet[idx]
-		if m.expandedSet[idx] {
-			if m.expandedFiles != nil {
-				m.setDiffViewForSelection(true)
-			} else {
-				return m, m.loadExpandedDiff()
-			}
+		if read {
+			m.statusMsg = "Marked read"
 		} else {
-			m.setDiffViewForSelection(true)
+			m.statusMsg = "Marked unread"
 		}
 		return m, nil
 	}

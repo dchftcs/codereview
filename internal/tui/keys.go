@@ -9,6 +9,8 @@ type keyMap struct {
 	ScreenBottom      key.Binding
 	NextFile          key.Binding
 	PrevFile          key.Binding
+	NextUnreadFile    key.Binding
+	PrevUnreadFile    key.Binding
 	NextCommit        key.Binding
 	PrevCommit        key.Binding
 	Comment           key.Binding
@@ -43,6 +45,7 @@ type keyMap struct {
 	ToggleRelativeNum key.Binding
 	ViewGeneral       key.Binding
 	VisualMode        key.Binding
+	ToggleRead        key.Binding
 }
 
 var keys = keyMap{
@@ -50,8 +53,10 @@ var keys = keyMap{
 	Down:              key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("", "")),
 	ScreenTop:         key.NewBinding(key.WithKeys("H"), key.WithHelp("H/L", "screen top/bot")),
 	ScreenBottom:      key.NewBinding(key.WithKeys("L"), key.WithHelp("", "")),
-	NextFile:          key.NewBinding(key.WithKeys("]", "right"), key.WithHelp("]/[/→/←", "next/prev file")),
-	PrevFile:          key.NewBinding(key.WithKeys("[", "left"), key.WithHelp("", "")),
+	NextFile:          key.NewBinding(key.WithKeys("]"), key.WithHelp("]/[", "next/prev file")),
+	PrevFile:          key.NewBinding(key.WithKeys("["), key.WithHelp("", "")),
+	NextUnreadFile:    key.NewBinding(key.WithKeys("right"), key.WithHelp("→/←", "next/prev unread")),
+	PrevUnreadFile:    key.NewBinding(key.WithKeys("left"), key.WithHelp("", "")),
 	NextCommit:        key.NewBinding(key.WithKeys("l"), key.WithHelp("h/l", "prev/next commit")),
 	PrevCommit:        key.NewBinding(key.WithKeys("h"), key.WithHelp("", "")),
 	Comment:           key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comment")),
@@ -86,4 +91,5 @@ var keys = keyMap{
 	ToggleRelativeNum: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "toggle line nums")),
 	ViewGeneral:       key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "focus general panel")),
 	VisualMode:        key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "visual select")),
+	ToggleRead:        key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark read/unread")),
 }

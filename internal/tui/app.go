@@ -702,6 +702,22 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fileList.prev()
 		}
 		m.setDiffViewForSelection(false)
+	case key.Matches(msg, keys.NextUnreadFile):
+		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
+		for i := 0; i < count; i++ {
+			if !m.fileList.nextUnread() {
+				break
+			}
+		}
+		m.setDiffViewForSelection(false)
+	case key.Matches(msg, keys.PrevUnreadFile):
+		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
+		for i := 0; i < count; i++ {
+			if !m.fileList.prevUnread() {
+				break
+			}
+		}
+		m.setDiffViewForSelection(false)
 
 	case key.Matches(msg, keys.NextModified):
 		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
@@ -882,6 +898,17 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, keys.Help):
 		m.mode = modeHelp
+
+	case key.Matches(msg, keys.ToggleRead):
+		read, ok := m.fileList.toggleReadSelected()
+		if !ok {
+			break
+		}
+		if read {
+			m.statusMsg = "Marked read"
+		} else {
+			m.statusMsg = "Marked unread"
+		}
 
 	case key.Matches(msg, keys.Save):
 		return m.beginSaveAndQuit()
@@ -1498,7 +1525,9 @@ func (m Model) helpView() string {
 		{"f", "Find file by name/path"},
 		{"p", "Find file by content"},
 		{"n / N", "Next / previous match"},
-		{"] / [ / → / ←", "Next / previous file"},
+		{"] / [", "Next / previous file (includes read)"},
+		{"→ / ←", "Next / previous unread file"},
+		{"m", "Mark selected file read/unread"},
 		{"} / {", "Next / previous modified file"},
 		{"M", "Jump to first modified file"},
 		{"t", "Toggle changed / all files"},
@@ -1687,7 +1716,7 @@ func (m Model) renderFooter() string {
 		dividerWidth = 1
 	}
 	footerDivider := footerStyle.MaxWidth(m.width).Render(strings.Repeat("─", dividerWidth))
-	navInfo := fmt.Sprintf(" `f`find `p`content `]/[/←/→`next/prev `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
+	navInfo := fmt.Sprintf(" `f`find `p`content `]/[`next/prev `←/→`unread `m`read `}/{`modified `M`first `t`all-files `o`dir `</>`resize  [%s] %s  %s",
 		fileMode, fileCount, commentCount)
 	if m.statusMsg != "" {
 		navInfo += "  " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)

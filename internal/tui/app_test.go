@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/codereview/internal/diff"
 )
 
@@ -53,6 +54,82 @@ func TestUpdateNavigationChangesCursorAndFileSelection(t *testing.T) {
 	m = pressKey(m, keyRunes("G"))
 	if m.diffView.cursorY != 1 {
 		t.Fatalf("cursor after 2G = %d, want 1", m.diffView.cursorY)
+	}
+}
+
+func TestArrowNavigationSkipsReadFilesButBracketNavigationDoesNot(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModelWithFiles([]diff.FileDiff{
+		{OldName: "a.go", NewName: "a.go"},
+		{OldName: "b.go", NewName: "b.go"},
+		{OldName: "c.go", NewName: "c.go"},
+	})
+
+	// Mark b.go as read.
+	m = pressKey(m, keyRunes("]"))
+	m = pressKey(m, keyRunes("m"))
+
+	// ] should still include read files.
+	m = pressKey(m, keyRunes("["))
+	m = pressKey(m, keyRunes("]"))
+	if got := m.fileList.selectedDiffPath(); got != "b.go" {
+		t.Fatalf("selected file after ] = %q, want b.go", got)
+	}
+
+	// Right arrow should skip read b.go and go from a.go to c.go.
+	m = pressKey(m, keyRunes("["))
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyRight})
+	if got := m.fileList.selectedDiffPath(); got != "c.go" {
+		t.Fatalf("selected file after right arrow = %q, want c.go", got)
+	}
+
+	// Left arrow should skip read b.go and return from c.go to a.go.
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if got := m.fileList.selectedDiffPath(); got != "a.go" {
+		t.Fatalf("selected file after left arrow = %q, want a.go", got)
+	}
+}
+
+func TestFileListContextMenuMarkReadUnread(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModelWithFiles([]diff.FileDiff{
+		{OldName: "a.go", NewName: "a.go"},
+		{OldName: "b.go", NewName: "b.go"},
+	})
+
+	headerH := lipgloss.Height(m.renderHeader())
+	next, _ := m.handleRightClick(1, headerH+1)
+	m = next.(Model)
+
+	if m.mode != modeContextMenu {
+		t.Fatalf("mode after right click = %v, want %v", m.mode, modeContextMenu)
+	}
+	if got := len(m.ctxMenu.items); got != 1 {
+		t.Fatalf("len(ctxMenu.items) = %d, want 1", got)
+	}
+	if m.ctxMenu.items[0].label != "Mark read" {
+		t.Fatalf("unexpected context menu items: %+v", m.ctxMenu.items)
+	}
+
+	m.ctxMenu.selected = 0
+	next, _ = m.executeContextMenuItem()
+	m = next.(Model)
+	if !m.fileList.isPathRead("a.go") {
+		t.Fatal("a.go should be marked read")
+	}
+
+	next, _ = m.handleRightClick(1, headerH+1)
+	m = next.(Model)
+	if m.ctxMenu.items[0].label != "Mark unread" {
+		t.Fatalf("expected Mark unread after read state, got: %+v", m.ctxMenu.items)
+	}
+	m.ctxMenu.selected = 0
+	next, _ = m.executeContextMenuItem()
+	m = next.(Model)
+	if m.fileList.isPathRead("a.go") {
+		t.Fatal("a.go should be marked unread")
 	}
 }
 
@@ -306,11 +383,29 @@ func newTestModel() Model {
 }
 
 func newTestModelWithConfig(cfg Config) Model {
+	return newTestModelWithFilesAndConfig(defaultTestFiles(), cfg)
+}
+
+func newTestModelWithFiles(files []diff.FileDiff) Model {
+	return newTestModelWithFilesAndConfig(files, Config{})
+}
+
+func newTestModelWithFilesAndConfig(files []diff.FileDiff, cfg Config) Model {
 	m := NewModel(cfg)
 	m.width = 120
 	m.height = 30
 
-	files := []diff.FileDiff{
+	m.fileList = newFileList(files)
+	m.fileList.review = m.review
+	m.updateLayout()
+	if f := m.fileList.selectedFile(); f != nil {
+		m.diffView.setFile(f, m.review)
+	}
+	return m
+}
+
+func defaultTestFiles() []diff.FileDiff {
+	return []diff.FileDiff{
 		{
 			OldName: "a.go",
 			NewName: "a.go",
@@ -338,14 +433,6 @@ func newTestModelWithConfig(cfg Config) Model {
 			}},
 		},
 	}
-
-	m.fileList = newFileList(files)
-	m.fileList.review = m.review
-	m.updateLayout()
-	if f := m.fileList.selectedFile(); f != nil {
-		m.diffView.setFile(f, m.review)
-	}
-	return m
 }
 
 func pressKey(m Model, msg tea.KeyMsg) Model {

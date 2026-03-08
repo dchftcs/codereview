@@ -45,8 +45,11 @@ In the file list, untracked files are marked with `??`.
 | `Ctrl+d` / `Ctrl+u` | Half page down/up |
 | `/` | Search in diff |
 | `n` / `N` | Next / previous search match |
-| `]` / `[` | Next / previous file (state preserved) |
-| `h` / `l` / `←` / `→` | Previous / next commit |
+| `]` / `[` | Next / previous file (includes read files; state preserved) |
+| `←` / `→` | Previous / next unread file |
+| `m` | Mark selected file read/unread |
+| `Shift+click` (file list) | Open context menu to toggle read/unread |
+| `h` / `l` | Previous / next commit |
 | `c` | Add inline comment at cursor line |
 | `R` | Edit general comment (review-level) |
 | `Enter` | Insert newline in comment |
@@ -67,6 +70,7 @@ Long lines are soft-wrapped in the diff view (not truncated).
 ## Navigation Guarantees
 
 - File navigation (`]` / `[`) restores per-file cursor/scroll/comment-input state.
+- Arrow navigation (`←` / `→`) skips files marked as read.
 - Expand/collapse (`e`) keeps the cursor anchored to the same logical diff row identity.
 - Expand/collapse (`e`) keeps the cursor on the same on-screen row when feasible.
 

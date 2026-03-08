@@ -10,10 +10,10 @@ type Comment struct {
 
 // Review holds all comments and metadata for a code review session.
 type Review struct {
-	Comments       []Comment `json:"comments"`
-	GeneralComments []string `json:"general_comments,omitempty"`
-	CommitHash     string    `json:"commit_hash,omitempty"`
-	CommitSubject  string    `json:"commit_subject,omitempty"`
+	Comments        []Comment `json:"comments"`
+	GeneralComments []string  `json:"general_comments,omitempty"`
+	CommitHash      string    `json:"commit_hash,omitempty"`
+	CommitSubject   string    `json:"commit_subject,omitempty"`
 }
 
 func New() *Review {
@@ -38,21 +38,36 @@ func (r *Review) AddRangeComment(file string, startLine, endLine int, text strin
 }
 
 func (r *Review) AddGeneralComment(text string) {
-	r.GeneralComments = append(r.GeneralComments, text)
+	if text == "" {
+		r.GeneralComments = nil
+		return
+	}
+	r.GeneralComments = []string{text}
 }
 
 func (r *Review) DeleteGeneralComment(index int) {
-	if index < 0 || index >= len(r.GeneralComments) {
+	if index != 0 || len(r.GeneralComments) == 0 {
 		return
 	}
-	r.GeneralComments = append(r.GeneralComments[:index], r.GeneralComments[index+1:]...)
+	r.GeneralComments = nil
 }
 
 func (r *Review) EditGeneralComment(index int, text string) {
-	if index < 0 || index >= len(r.GeneralComments) {
+	if index != 0 || len(r.GeneralComments) == 0 {
 		return
 	}
-	r.GeneralComments[index] = text
+	if text == "" {
+		r.GeneralComments = nil
+		return
+	}
+	r.GeneralComments = []string{text}
+}
+
+func (r *Review) GeneralComment() string {
+	if len(r.GeneralComments) == 0 {
+		return ""
+	}
+	return r.GeneralComments[0]
 }
 
 func (r *Review) DeleteComment(file string, line int) {

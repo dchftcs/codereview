@@ -45,7 +45,7 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `]` / `[` | Next / previous file (state preserved) |
 | `h` / `l` / `←` / `→` | Previous / next commit |
 | `c` | Add inline comment at cursor line |
-| `R` | Add general comment (review-level) |
+| `R` | Edit general comment (review-level) |
 | `Enter` | Insert newline in comment |
 | `Ctrl+s` | Submit comment |
 | `Ctrl+g` | Open `$EDITOR` for comment |
@@ -104,7 +104,7 @@ Inline comments: 2
 
 ## General Comments
 
-- Add tests for invalid/expired tokens.
+Add tests for invalid/expired tokens.
 ````
 
 Inline comments are grouped by file, files are sorted alphabetically, and comments are sorted by line number.  

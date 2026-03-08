@@ -77,18 +77,12 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 		}
 	}
 
-	if len(rev.GeneralComments) > 0 {
+	if gc := rev.GeneralComment(); gc != "" {
 		sb.WriteString("## General Comments\n\n")
-		for _, gc := range rev.GeneralComments {
-			if strings.Contains(gc, "\n") {
-				sb.WriteString(fmt.Sprintf("- %s\n\n", strings.ReplaceAll(gc, "\n", "\n  ")))
-			} else {
-				sb.WriteString(fmt.Sprintf("- %s\n", gc))
-			}
-		}
+		sb.WriteString(gc + "\n")
 	}
 
-	if len(rev.Comments) == 0 && len(rev.GeneralComments) == 0 {
+	if len(rev.Comments) == 0 && rev.GeneralComment() == "" {
 		sb.WriteString("No comments.\n")
 	}
 

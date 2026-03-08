@@ -192,6 +192,55 @@ func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 	}
 }
 
+func TestGeneralPanelFocusAndActions(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m = pressKey(m, keyRunes("R"))
+	m = typeText(m, "initial general")
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if m.focus != focusGeneralPanel {
+		t.Fatalf("focus after ctrl+r = %v, want %v", m.focus, focusGeneralPanel)
+	}
+
+	m = pressKey(m, keyRunes("E"))
+	if m.mode != modeGeneralComment {
+		t.Fatalf("mode after E in general panel = %v, want %v", m.mode, modeGeneralComment)
+	}
+	m = typeText(m, " updated")
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if got := m.review.GeneralComments[0]; got != "initial general updated" {
+		t.Fatalf("edited general comment = %q", got)
+	}
+
+	m = pressKey(m, keyRunes("d"))
+	if got := len(m.review.GeneralComments); got != 0 {
+		t.Fatalf("len(review.GeneralComments) after panel delete = %d, want 0", got)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.focus != focusDiff {
+		t.Fatalf("focus after esc = %v, want %v", m.focus, focusDiff)
+	}
+}
+
+func TestREditsExistingGeneralComment(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.review.AddGeneralComment("existing text")
+
+	m = pressKey(m, keyRunes("R"))
+	if m.mode != modeGeneralComment {
+		t.Fatalf("mode after R = %v, want %v", m.mode, modeGeneralComment)
+	}
+	if got := m.generalInput.Value(); got != "existing text" {
+		t.Fatalf("general input prefill = %q, want %q", got, "existing text")
+	}
+}
+
 func TestSaveAndQuitFlags(t *testing.T) {
 	t.Parallel()
 

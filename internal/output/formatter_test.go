@@ -19,7 +19,7 @@ func TestFormatMarkdownDeterministicFileOrderingAndInlineBlocks(t *testing.T) {
 			{File: "a.go", Line: 1, Text: "context line comment"},
 			{File: "missing.go", Line: 99, Text: "no file context"},
 		},
-		GeneralComments: []string{"overall 1", "overall 2"},
+		GeneralComments: []string{"overall notes\nsecond line"},
 		CommitHash:      "abc123",
 		CommitSubject:   "subject",
 	}
@@ -70,9 +70,10 @@ func TestFormatMarkdownDeterministicFileOrderingAndInlineBlocks(t *testing.T) {
 	mustContain(t, out, "> context line comment")
 	mustContain(t, out, "> no file context")
 
-	// General comments preserved
-	mustContain(t, out, "- overall 1")
-	mustContain(t, out, "- overall 2")
+	// General comments are a single free-form block (not bullets)
+	mustContain(t, out, "overall notes")
+	mustContain(t, out, "second line")
+	mustNotContain(t, out, "- overall")
 
 	// Old format should NOT be present
 	mustNotContain(t, out, "(added)")

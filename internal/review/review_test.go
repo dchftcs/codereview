@@ -83,18 +83,18 @@ func TestDeleteCommentMissingIsNoOp(t *testing.T) {
 	}
 }
 
-func TestAddGeneralCommentAppendsInOrder(t *testing.T) {
+func TestAddGeneralCommentStoresSingleTextBlob(t *testing.T) {
 	t.Parallel()
 
 	rev := New()
 	rev.AddGeneralComment("first")
 	rev.AddGeneralComment("second")
 
-	if got := len(rev.GeneralComments); got != 2 {
-		t.Fatalf("len(GeneralComments) = %d, want 2", got)
+	if got := len(rev.GeneralComments); got != 1 {
+		t.Fatalf("len(GeneralComments) = %d, want 1", got)
 	}
-	if rev.GeneralComments[0] != "first" || rev.GeneralComments[1] != "second" {
-		t.Fatalf("unexpected GeneralComments order: %+v", rev.GeneralComments)
+	if rev.GeneralComments[0] != "second" {
+		t.Fatalf("unexpected GeneralComments value: %+v", rev.GeneralComments)
 	}
 }
 

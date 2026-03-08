@@ -559,7 +559,7 @@ func (dv *diffView) toggleMode() {
 
 func (dv *diffView) newCommentTextarea() textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Enter comment... (enter=newline, ctrl+enter=submit, ctrl+g=editor)"
+	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
 	ta.CharLimit = 2000
 	ta.SetWidth(dv.width - 12)
 	ta.SetHeight(3)

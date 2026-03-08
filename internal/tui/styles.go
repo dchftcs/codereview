@@ -16,30 +16,30 @@ type palette struct {
 }
 
 var darkPalette = palette{
-	red:       lipgloss.Color("#ff5555"),
-	green:     lipgloss.Color("#50fa7b"),
-	yellow:    lipgloss.Color("#f1fa8c"),
-	blue:      lipgloss.Color("#8be9fd"),
-	purple:    lipgloss.Color("#bd93f9"),
-	dim:       lipgloss.Color("#6272a4"),
-	bg:        lipgloss.Color("#282a36"),
-	bgLight:   lipgloss.Color("#44475a"),
-	fg:        lipgloss.Color("#f8f8f2"),
+	red:            lipgloss.Color("#ff5555"),
+	green:          lipgloss.Color("#50fa7b"),
+	yellow:         lipgloss.Color("#f1fa8c"),
+	blue:           lipgloss.Color("#8be9fd"),
+	purple:         lipgloss.Color("#bd93f9"),
+	dim:            lipgloss.Color("#6272a4"),
+	bg:             lipgloss.Color("#282a36"),
+	bgLight:        lipgloss.Color("#44475a"),
+	fg:             lipgloss.Color("#f8f8f2"),
 	addedBg:        lipgloss.Color("#1a2e1a"),
 	removedBg:      lipgloss.Color("#2e1a1a"),
 	commentRangeBg: lipgloss.Color("#2a2040"),
 }
 
 var lightPalette = palette{
-	red:       lipgloss.Color("#cc0000"),
-	green:     lipgloss.Color("#007700"),
-	yellow:    lipgloss.Color("#886600"),
-	blue:      lipgloss.Color("#0055aa"),
-	purple:    lipgloss.Color("#6a0dad"),
-	dim:       lipgloss.Color("#888888"),
-	bg:        lipgloss.Color("#f5f5dc"),
-	bgLight:   lipgloss.Color("#d8d8c0"),
-	fg:        lipgloss.Color("#333333"),
+	red:            lipgloss.Color("#cc0000"),
+	green:          lipgloss.Color("#007700"),
+	yellow:         lipgloss.Color("#886600"),
+	blue:           lipgloss.Color("#0055aa"),
+	purple:         lipgloss.Color("#6a0dad"),
+	dim:            lipgloss.Color("#888888"),
+	bg:             lipgloss.Color("#f5f5dc"),
+	bgLight:        lipgloss.Color("#d8d8c0"),
+	fg:             lipgloss.Color("#333333"),
 	addedBg:        lipgloss.Color("#d4f5d4"),
 	removedBg:      lipgloss.Color("#f5d4d4"),
 	commentRangeBg: lipgloss.Color("#ece0f5"),
@@ -58,24 +58,25 @@ var (
 	colorFg      lipgloss.Color
 
 	// Styles — set by applyTheme
-	fileListStyle      lipgloss.Style
-	diffPanelStyle     lipgloss.Style
-	headerStyle        lipgloss.Style
-	footerStyle        lipgloss.Style
-	addedStyle         lipgloss.Style
-	removedStyle       lipgloss.Style
-	lineNumStyle       lipgloss.Style
-	selectedFileStyle  lipgloss.Style
-	normalFileStyle    lipgloss.Style
-	commentBorderStyle lipgloss.Style
-	commentPromptStyle lipgloss.Style
-	hunkHeaderStyle    lipgloss.Style
-	cursorStyle        lipgloss.Style
-	addedBgStyle           lipgloss.Style
-	removedBgStyle         lipgloss.Style
-	commentRangeBgStyle    lipgloss.Style
-	contextMenuBoxStyle    lipgloss.Style
-	contextMenuItemStyle   lipgloss.Style
+	fileListStyle            lipgloss.Style
+	diffPanelStyle           lipgloss.Style
+	generalPanelStyle        lipgloss.Style
+	headerStyle              lipgloss.Style
+	footerStyle              lipgloss.Style
+	addedStyle               lipgloss.Style
+	removedStyle             lipgloss.Style
+	lineNumStyle             lipgloss.Style
+	selectedFileStyle        lipgloss.Style
+	normalFileStyle          lipgloss.Style
+	commentBorderStyle       lipgloss.Style
+	commentPromptStyle       lipgloss.Style
+	hunkHeaderStyle          lipgloss.Style
+	cursorStyle              lipgloss.Style
+	addedBgStyle             lipgloss.Style
+	removedBgStyle           lipgloss.Style
+	commentRangeBgStyle      lipgloss.Style
+	contextMenuBoxStyle      lipgloss.Style
+	contextMenuItemStyle     lipgloss.Style
 	contextMenuSelectedStyle lipgloss.Style
 )
 
@@ -107,6 +108,11 @@ func applyTheme(name ThemeName) {
 	diffPanelStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorDim)
+
+	generalPanelStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorDim).
+		Padding(0, 1)
 
 	headerStyle = lipgloss.NewStyle().
 		Background(colorPurple).

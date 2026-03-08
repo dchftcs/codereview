@@ -75,7 +75,7 @@ internal/
 - Inline comment input lives in `diffView` (not the bottom bar). General comment input uses a dedicated `generalInput textarea.Model` rendered as a centered overlay. The bottom bar (`bottomBarInput`) is only for single-line prompts (search, save-as, etc.).
 - `GeneralComments` is a `[]string` (not a single string). The formatter renders all of them. The footer shows their count (e.g. `"3 comments, 1 general"`), and a transient `statusMsg` confirms creation.
 - Arrow keys `←`/`→` are bound to file navigation (`PrevFile`/`NextFile`), not commit navigation. Commit navigation uses only `h`/`l`.
-- The inline comment `commentInput` is a `textarea.Model`, not a `textinput.Model`. Submit is `ctrl+enter` (primary) or `ctrl+s` (secondary), bound as `keys.SubmitComment`, not `Enter` (`keys.Submit`). Tests use `tea.KeyCtrlS` for both inline and general comment submission.
+- The inline comment `commentInput` is a `textarea.Model`, not a `textinput.Model`. Submit is `ctrl+s`, bound as `keys.SubmitComment`, not `Enter` (`keys.Submit`).
 - General comment input (`modeGeneralComment`) uses `generalInput textarea.Model` on `Model`, not the bottom bar. The bottom bar is no longer used for general comments.
 - The context menu uses Shift+left-click, not right-click. Right-click is intercepted by most terminal emulators (paste menu), so `MouseMsg` with `Button == MouseButtonRight` is unreliable. `MouseMsg.Shift` on a left-click is reliably passed through via SGR mouse encoding.
 - The context menu overlay (`overlayAt()`) works on stripped (non-ANSI) text. It replaces characters in the base view at the menu's screen coordinates. This means ANSI styling is lost on overlaid lines — acceptable for a small menu box but would not scale to large overlays.

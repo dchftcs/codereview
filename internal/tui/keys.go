@@ -82,7 +82,7 @@ var keys = keyMap{
 	ShrinkPanel:    key.NewBinding(key.WithKeys("<"), key.WithHelp("</>", "resize panel")),
 	GrowPanel:      key.NewBinding(key.WithKeys(">"), key.WithHelp("", "")),
 	OpenEditor:        key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "open editor")),
-	SubmitComment:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit comment")),
+	SubmitComment:     key.NewBinding(key.WithKeys("ctrl+enter", "ctrl+s"), key.WithHelp("ctrl+enter", "submit comment")),
 	ToggleRelativeNum: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "toggle line nums")),
 	ViewGeneral:       key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "view general comments")),
 	VisualMode:        key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "visual select")),

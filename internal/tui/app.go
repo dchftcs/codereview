@@ -32,6 +32,7 @@ const (
 	modeQuitConfirm
 	modeViewGeneral
 	modeVisual
+	modeContextMenu
 )
 
 // GitService is the narrow git surface needed by the TUI.
@@ -106,6 +107,13 @@ type Model struct {
 	quitting      bool
 	saving        bool
 	dirty         bool
+	// Context menu state
+	ctxMenu contextMenu
+	// Mouse drag state (for drag-to-select)
+	mouseDrag struct {
+		active   bool
+		startRow int // diff row where the press began
+	}
 }
 
 func NewModel(cfg Config) Model {
@@ -304,12 +312,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.mode == modeNormal && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			return m.handleMouseClick(msg.X, msg.Y)
+		if m.mode == modeContextMenu {
+			return m.updateContextMenuMouse(msg)
+		}
+		if msg.Button == tea.MouseButtonLeft {
+			if msg.Action == tea.MouseActionPress {
+				// Click cancels any existing visual selection
+				if m.mode == modeVisual {
+					m.mode = modeNormal
+					m.diffView.selectionActive = false
+				}
+				if m.mode == modeNormal {
+					if msg.Shift {
+						return m.handleRightClick(msg.X, msg.Y)
+					}
+					return m.handleMouseClick(msg.X, msg.Y)
+				}
+			}
+			if msg.Action == tea.MouseActionMotion {
+				return m.handleMouseDrag(msg.X, msg.Y)
+			}
+			if msg.Action == tea.MouseActionRelease {
+				m.mouseDrag.active = false
+			}
 		}
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.mode == modeContextMenu {
+			return m.updateContextMenu(msg)
+		}
 		if m.mode == modeComment {
 			return m.updateComment(msg)
 		}
@@ -743,11 +775,13 @@ func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
 	bodyY := y - headerH - 1 // row index within panel content area
 
 	if bodyY < 0 || bodyY >= m.diffView.height {
+		m.mouseDrag.active = false
 		return m, nil
 	}
 
 	// File list panel occupies columns 0..fileListWidth+1 (including border)
 	if x <= m.fileListWidth+1 {
+		m.mouseDrag.active = false
 		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
 		if m.fileList.clickAt(bodyY) {
 			m.setDiffViewForSelection(false)
@@ -758,8 +792,57 @@ func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
 	// Diff panel: content starts 1 line below border top (path line)
 	diffY := bodyY - 1 // subtract path line
 	if diffY >= 0 {
+		row := m.diffView.scrollY + diffY
+		if row >= 0 && row < len(m.diffView.rows) {
+			m.mouseDrag.active = true
+			m.mouseDrag.startRow = row
+		}
 		m.diffView.clickAt(diffY)
 	}
+	return m, nil
+}
+
+// handleMouseDrag extends a visual selection as the user drags in the diff panel.
+func (m Model) handleMouseDrag(x, y int) (tea.Model, tea.Cmd) {
+	if !m.mouseDrag.active {
+		return m, nil
+	}
+
+	headerH := lipgloss.Height(m.renderHeader())
+	bodyY := y - headerH - 1
+	if bodyY < 0 || bodyY >= m.diffView.height {
+		return m, nil
+	}
+
+	// Only drag in the diff panel
+	if x <= m.fileListWidth+1 {
+		return m, nil
+	}
+
+	diffY := bodyY - 1
+	if diffY < 0 {
+		return m, nil
+	}
+
+	row := m.diffView.scrollY + diffY
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(m.diffView.rows) {
+		row = len(m.diffView.rows) - 1
+	}
+
+	// Don't enter visual mode until the mouse actually moves to a different row
+	if row == m.mouseDrag.startRow {
+		return m, nil
+	}
+
+	if m.mode != modeVisual {
+		m.mode = modeVisual
+		m.diffView.selectionAnchor = m.mouseDrag.startRow
+		m.diffView.selectionActive = true
+	}
+	m.diffView.cursorY = row
 	return m, nil
 }
 
@@ -852,11 +935,12 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if startLine == 0 {
 			break
 		}
-		m.diffView.selectionActive = false
 		m.mode = modeComment
 		if startLine == endLine {
+			m.diffView.selectionActive = false
 			m.diffView.activateComment(file, startLine)
 		} else {
+			// Keep selection highlight visible while composing the range comment
 			m.diffView.activateRangeComment(file, startLine, endLine)
 		}
 		return m, m.diffView.commentInput.Focus()
@@ -969,7 +1053,7 @@ func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) newGeneralTextarea(initial string) textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
+	ta.Placeholder = "Enter comment... (enter=newline, ctrl+enter=submit, ctrl+g=editor)"
 	ta.CharLimit = 2000
 	w := m.width - 20
 	if w < 40 {
@@ -1077,7 +1161,7 @@ func (m Model) viewGeneralCommentInput() string {
 		Render("General Comment")
 
 	hint := lipgloss.NewStyle().Foreground(colorDim).MarginTop(1).Render(
-		"ctrl+s submit | ctrl+g editor | esc cancel")
+		"ctrl+enter submit | ctrl+g editor | esc cancel")
 
 	content := title + "\n" + m.generalInput.View() + "\n" + hint
 
@@ -1312,7 +1396,7 @@ func (m Model) helpView() string {
 		{"c", "Add inline comment at cursor"},
 		{"R", "Add general comment (multi-line)"},
 		{"Ctrl+r", "View/manage general comments"},
-		{"Ctrl+s", "Submit comment"},
+		{"Ctrl+Enter", "Submit comment"},
 		{"Enter", "Newline in comment"},
 		{"Ctrl+g", "Open $EDITOR for comment"},
 		{"Esc", "Cancel comment"},
@@ -1323,6 +1407,7 @@ func (m Model) helpView() string {
 		{"e", "Toggle full file context"},
 		{"s", "Save review and exit"},
 		{"q / Ctrl+c", "Quit (prompts if unsaved)"},
+		{"Shift+click", "Context menu"},
 		{"?", "Toggle this help screen"},
 	}
 
@@ -1519,11 +1604,18 @@ func (m Model) View() string {
 	dv := m.diffView.viewWithPath(m.fileList.selectedDiffPath())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, fl, dv)
 
+	var result string
 	if hasBottomBar {
-		return lipgloss.JoinVertical(lipgloss.Left, header, body, m.bottomBar.view(), footer)
+		result = lipgloss.JoinVertical(lipgloss.Left, header, body, m.bottomBar.view(), footer)
+	} else {
+		result = lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	if m.mode == modeContextMenu {
+		result = overlayAt(result, m.renderContextMenu(), m.ctxMenu.x, m.ctxMenu.y)
+	}
+
+	return result
 }
 
 // GetReview returns the review data (used after quit).

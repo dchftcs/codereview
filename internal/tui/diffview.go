@@ -559,7 +559,7 @@ func (dv *diffView) toggleMode() {
 
 func (dv *diffView) newCommentTextarea() textarea.Model {
 	ta := textarea.New()
-	ta.Placeholder = "Enter comment... (enter=newline, ctrl+s=submit, ctrl+g=editor)"
+	ta.Placeholder = "Enter comment... (enter=newline, ctrl+enter=submit, ctrl+g=editor)"
 	ta.CharLimit = 2000
 	ta.SetWidth(dv.width - 12)
 	ta.SetHeight(3)
@@ -623,6 +623,7 @@ func (dv *diffView) deactivateComment() {
 	dv.commentActive = false
 	dv.commentEditing = false
 	dv.commentEndLine = 0
+	dv.selectionActive = false
 	dv.commentInput.Blur()
 }
 
@@ -713,6 +714,14 @@ func (dv *diffView) renderSideBySideContent() string {
 					rendered += strings.Repeat(" ", cw-visW)
 				}
 				rendered = cursorStyle.MaxWidth(cw).Render(rendered)
+			} else if dv.isInCommentRange(i) {
+				rendered = withPersistentBg(rendered, bgHex(commentRangeBgStyle.GetBackground()))
+				visW := lipgloss.Width(rendered)
+				cw := dv.width - 4 - relGutter
+				if visW < cw {
+					rendered += strings.Repeat(" ", cw-visW)
+				}
+				rendered = commentRangeBgStyle.MaxWidth(cw).Render(rendered)
 			}
 			lines = append(lines, relPrefix+rendered)
 		}
@@ -850,6 +859,14 @@ func (dv *diffView) renderUnifiedContent() string {
 						r += strings.Repeat(" ", cw-visW)
 					}
 					r = cursorStyle.MaxWidth(cw).Render(r)
+				} else if dv.isInCommentRange(i) {
+					r = withPersistentBg(r, bgHex(commentRangeBgStyle.GetBackground()))
+					cw := dv.width - 4 - relGutter
+					visW := lipgloss.Width(r)
+					if visW < cw {
+						r += strings.Repeat(" ", cw-visW)
+					}
+					r = commentRangeBgStyle.MaxWidth(cw).Render(r)
 				}
 				lines = append(lines, relPrefix+r)
 			}
@@ -942,6 +959,31 @@ func (dv *diffView) renderInlineInput() string {
 	input := dv.commentInput.View()
 	content := label + "\n" + input
 	return commentBorderStyle.Width(dv.width - 6).Render(content)
+}
+
+// isInCommentRange returns true if the given row's line number falls within
+// any range comment's [Line, EndLine] for the current file.
+func (dv *diffView) isInCommentRange(rowIdx int) bool {
+	if dv.comments == nil || dv.file == nil {
+		return false
+	}
+	if rowIdx < 0 || rowIdx >= len(dv.rows) {
+		return false
+	}
+	row := dv.rows[rowIdx]
+	if row.kind != rowDiffPair || row.lineNum == 0 {
+		return false
+	}
+	filename := dv.file.NewName
+	if filename == "/dev/null" {
+		filename = dv.file.OldName
+	}
+	for _, c := range dv.comments.Comments {
+		if c.File == filename && c.EndLine > 0 && row.lineNum >= c.Line && row.lineNum <= c.EndLine {
+			return true
+		}
+	}
+	return false
 }
 
 func (dv *diffView) isInSelection(rowIdx int) bool {

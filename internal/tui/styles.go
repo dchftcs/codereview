@@ -12,7 +12,7 @@ const (
 
 type palette struct {
 	red, green, yellow, blue, purple, dim, bg, bgLight, fg lipgloss.Color
-	addedBg, removedBg                                     lipgloss.Color
+	addedBg, removedBg, commentRangeBg                     lipgloss.Color
 }
 
 var darkPalette = palette{
@@ -25,8 +25,9 @@ var darkPalette = palette{
 	bg:        lipgloss.Color("#282a36"),
 	bgLight:   lipgloss.Color("#44475a"),
 	fg:        lipgloss.Color("#f8f8f2"),
-	addedBg:   lipgloss.Color("#1a2e1a"),
-	removedBg: lipgloss.Color("#2e1a1a"),
+	addedBg:        lipgloss.Color("#1a2e1a"),
+	removedBg:      lipgloss.Color("#2e1a1a"),
+	commentRangeBg: lipgloss.Color("#2a2040"),
 }
 
 var lightPalette = palette{
@@ -39,8 +40,9 @@ var lightPalette = palette{
 	bg:        lipgloss.Color("#f5f5dc"),
 	bgLight:   lipgloss.Color("#d8d8c0"),
 	fg:        lipgloss.Color("#333333"),
-	addedBg:   lipgloss.Color("#d4f5d4"),
-	removedBg: lipgloss.Color("#f5d4d4"),
+	addedBg:        lipgloss.Color("#d4f5d4"),
+	removedBg:      lipgloss.Color("#f5d4d4"),
+	commentRangeBg: lipgloss.Color("#ece0f5"),
 }
 
 var (
@@ -69,8 +71,12 @@ var (
 	commentPromptStyle lipgloss.Style
 	hunkHeaderStyle    lipgloss.Style
 	cursorStyle        lipgloss.Style
-	addedBgStyle       lipgloss.Style
-	removedBgStyle     lipgloss.Style
+	addedBgStyle           lipgloss.Style
+	removedBgStyle         lipgloss.Style
+	commentRangeBgStyle    lipgloss.Style
+	contextMenuBoxStyle    lipgloss.Style
+	contextMenuItemStyle   lipgloss.Style
+	contextMenuSelectedStyle lipgloss.Style
 )
 
 func init() {
@@ -156,4 +162,22 @@ func applyTheme(name ThemeName) {
 
 	removedBgStyle = lipgloss.NewStyle().
 		Background(p.removedBg)
+
+	commentRangeBgStyle = lipgloss.NewStyle().
+		Background(p.commentRangeBg)
+
+	contextMenuBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(p.purple).
+		Background(p.bg).
+		Padding(0, 1)
+
+	contextMenuItemStyle = lipgloss.NewStyle().
+		Foreground(p.fg).
+		Background(p.bg)
+
+	contextMenuSelectedStyle = lipgloss.NewStyle().
+		Foreground(p.blue).
+		Background(p.bgLight).
+		Bold(true)
 }

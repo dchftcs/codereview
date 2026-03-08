@@ -50,7 +50,11 @@ func diffInternal(revSpec string, fullContext bool) (string, error) {
 		ctx = []string{"-U99999"}
 	}
 	if revSpec == "" {
-		return run(append([]string{"diff"}, append(ctx, "HEAD")...)...)
+		out, err := run(append([]string{"diff"}, append(ctx, "HEAD")...)...)
+		if err != nil {
+			return "", err
+		}
+		return appendUntrackedDiff(out, fullContext)
 	}
 	// Three-dot: diff from merge-base (branch changes only)
 	if strings.Contains(revSpec, "...") {
@@ -59,6 +63,15 @@ func diffInternal(revSpec string, fullContext bool) (string, error) {
 		mergeBase, err := MergeBase(base, head)
 		if err != nil {
 			return "", fmt.Errorf("finding merge base: %w", err)
+		}
+		// For default branch-vs-HEAD review, include committed + staged + unstaged
+		// changes by diffing merge-base directly to the working tree.
+		if head == "HEAD" {
+			out, err := run(append([]string{"diff"}, append(ctx, mergeBase)...)...)
+			if err != nil {
+				return "", err
+			}
+			return appendUntrackedDiff(out, fullContext)
 		}
 		return run(append([]string{"diff"}, append(ctx, mergeBase, head)...)...)
 	}
@@ -105,6 +118,56 @@ func DefaultBranch() string {
 	return "main"
 }
 
+// UntrackedFiles returns untracked file paths (relative to repo root).
+func UntrackedFiles() ([]string, error) {
+	out, err := run("ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var files []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		files = append(files, l)
+	}
+	return files, nil
+}
+
+func appendUntrackedDiff(base string, fullContext bool) (string, error) {
+	files, err := UntrackedFiles()
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return base, nil
+	}
+
+	var b strings.Builder
+	b.WriteString(base)
+	for _, p := range files {
+		args := []string{"diff", "--no-index"}
+		if fullContext {
+			args = append(args, "-U99999")
+		}
+		args = append(args, "--", "/dev/null", p)
+		out, err := runAllowExitCode(args...)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(out) == "" {
+			continue
+		}
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString(out)
+	}
+	return b.String(), nil
+}
+
 func run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	out, err := cmd.Output()
@@ -115,4 +178,20 @@ func run(args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func runAllowExitCode(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		// `git diff --no-index` exits 1 when differences are found.
+		if exitErr.ExitCode() == 1 {
+			return string(out), nil
+		}
+		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
+	}
+	return "", err
 }

@@ -33,8 +33,9 @@ type Hunk struct {
 }
 
 type FileDiff struct {
-	OldName string
-	NewName string
-	Hunks   []Hunk
-	Binary  bool
+	OldName   string
+	NewName   string
+	Hunks     []Hunk
+	Binary    bool
+	Untracked bool
 }

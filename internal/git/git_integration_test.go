@@ -91,12 +91,18 @@ func TestDiffVariants(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "demo.txt"), []byte("one\nfeature-two\nthree\nworking-tree\n"), 0644); err != nil {
 		t.Fatalf("WriteFile working tree change: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("untracked-line\n"), 0644); err != nil {
+		t.Fatalf("WriteFile untracked change: %v", err)
+	}
 	working, err := Diff("")
 	if err != nil {
 		t.Fatalf("Diff(\"\") returned error: %v", err)
 	}
 	if !strings.Contains(working, "working-tree") {
 		t.Fatalf("working-tree diff missing change:\n%s", working)
+	}
+	if !strings.Contains(working, "untracked-line") {
+		t.Fatalf("working-tree diff missing untracked file:\n%s", working)
 	}
 }
 
@@ -123,6 +129,47 @@ func TestDiffFullHasMoreContext(t *testing.T) {
 	}
 	if !strings.Contains(full, "l1") || !strings.Contains(full, "l10") {
 		t.Fatalf("DiffFull missing full-context lines:\n%s", full)
+	}
+}
+
+func TestThreeDotHeadIncludesWorkingTreeAndStagedChanges(t *testing.T) {
+	ensureGitAvailable(t)
+
+	repo := initRepo(t, "main")
+	commitFile(t, repo, "demo.txt", "base\n", "base")
+	gitCmd(t, repo, "checkout", "-b", "feature")
+	commitFile(t, repo, "demo.txt", "base\nfeature-commit\n", "feature commit")
+
+	// Unstaged working-tree change
+	if err := os.WriteFile(filepath.Join(repo, "demo.txt"), []byte("base\nfeature-commit\nworking-tree\n"), 0644); err != nil {
+		t.Fatalf("WriteFile working tree change: %v", err)
+	}
+	// Staged change in another file
+	if err := os.WriteFile(filepath.Join(repo, "staged.txt"), []byte("staged-change\n"), 0644); err != nil {
+		t.Fatalf("WriteFile staged file: %v", err)
+	}
+	gitCmd(t, repo, "add", "staged.txt")
+	// Untracked file
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("untracked-change\n"), 0644); err != nil {
+		t.Fatalf("WriteFile untracked file: %v", err)
+	}
+
+	chdir(t, repo)
+	out, err := Diff("main...HEAD")
+	if err != nil {
+		t.Fatalf("Diff(main...HEAD) returned error: %v", err)
+	}
+	if !strings.Contains(out, "feature-commit") {
+		t.Fatalf("expected committed branch change in output:\n%s", out)
+	}
+	if !strings.Contains(out, "working-tree") {
+		t.Fatalf("expected unstaged change in output:\n%s", out)
+	}
+	if !strings.Contains(out, "staged-change") {
+		t.Fatalf("expected staged change in output:\n%s", out)
+	}
+	if !strings.Contains(out, "untracked-change") {
+		t.Fatalf("expected untracked change in output:\n%s", out)
 	}
 }
 

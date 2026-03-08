@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
@@ -113,6 +114,83 @@ func TestViewWithPathHeightStableForShortAndFullDiffs(t *testing.T) {
 	}
 	if fullH != want {
 		t.Fatalf("full diff panel height = %d, want %d", fullH, want)
+	}
+}
+
+func TestViewSoftWrapsLongLineWithoutTruncation(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 60
+	dv.height = 10
+	dv.setFile(&diff.FileDiff{
+		OldName: "wrap.go",
+		NewName: "wrap.go",
+		Hunks: []diff.Hunk{{
+			OldStart: 1,
+			OldCount: 1,
+			NewStart: 1,
+			NewCount: 1,
+			Pairs: []diff.LinePair{{
+				Left:  &diff.DiffLine{Op: diff.OpEqual, Content: "prefix " + strings.Repeat("x", 120) + " suffix", OldNum: 1, NewNum: 1},
+				Right: &diff.DiffLine{Op: diff.OpEqual, Content: "prefix " + strings.Repeat("x", 120) + " suffix", OldNum: 1, NewNum: 1},
+			}},
+		}},
+	}, review.New())
+
+	out := dv.viewWithPath("wrap.go")
+	if !strings.Contains(out, "suffix") {
+		t.Fatalf("wrapped output missing tail content, got:\n%s", out)
+	}
+}
+
+func TestWrappedSideBySideLineNumbersMatchBothSides(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 80
+
+	line := &diff.DiffLine{
+		Op:      diff.OpEqual,
+		Content: strings.Repeat("abcdefghij", 12),
+		OldNum:  42,
+		NewNum:  42,
+	}
+
+	left := dv.renderSideWrapped(line, 30, true)
+	right := dv.renderSideWrapped(line, 30, false)
+	if len(left) < 2 || len(right) < 2 {
+		t.Fatalf("expected wrapped output with multiple segments, got left=%d right=%d", len(left), len(right))
+	}
+
+	left0 := stripAnsi(left[0])
+	right0 := stripAnsi(right[0])
+	if !strings.Contains(left0, "42") || !strings.Contains(right0, "42") {
+		t.Fatalf("first wrapped segment should show line numbers on both sides: left=%q right=%q", left0, right0)
+	}
+
+	left1 := stripAnsi(left[1])
+	right1 := stripAnsi(right[1])
+	if strings.Contains(left1, "0") || strings.Contains(right1, "0") {
+		t.Fatalf("continuation segment should not render 0 line numbers: left=%q right=%q", left1, right1)
+	}
+}
+
+func TestSideBySideShowsRelativeNumbersOnBothSides(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 8
+	dv.setFile(makeLargeFileDiff(3), review.New())
+	dv.cursorY = 1 // first diff row (after hunk header)
+	dv.scrollY = 1
+
+	out := dv.renderSideBySideContent()
+	first := strings.Split(out, "\n")[0]
+	plain := stripAnsi(first)
+	if strings.Count(plain, "  0") < 2 {
+		t.Fatalf("expected relative cursor number on both sides, got: %q", plain)
 	}
 }
 

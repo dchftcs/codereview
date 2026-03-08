@@ -46,6 +46,7 @@ type GitService interface {
 	Diff(revSpec string) (string, error)
 	DiffFull(revSpec string) (string, error)
 	Log(n int) ([]gitpkg.CommitInfo, error)
+	UntrackedFiles() ([]string, error)
 }
 
 type defaultGitService struct{}
@@ -60,6 +61,10 @@ func (defaultGitService) DiffFull(revSpec string) (string, error) {
 
 func (defaultGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
 	return gitpkg.Log(n)
+}
+
+func (defaultGitService) UntrackedFiles() ([]string, error) {
+	return gitpkg.UntrackedFiles()
 }
 
 // Config holds TUI startup configuration.
@@ -155,9 +160,10 @@ func (m Model) Init() tea.Cmd {
 }
 
 type diffLoadedMsg struct {
-	files   []diff.FileDiff
-	commits []gitpkg.CommitInfo
-	err     error
+	files     []diff.FileDiff
+	commits   []gitpkg.CommitInfo
+	untracked []string
+	err       error
 }
 
 func (m Model) loadDiff() tea.Cmd {
@@ -173,8 +179,9 @@ func (m Model) loadDiff() tea.Cmd {
 		}
 
 		commits, _ := m.git.Log(50)
+		untracked, _ := m.git.UntrackedFiles()
 
-		return diffLoadedMsg{files: files, commits: commits}
+		return diffLoadedMsg{files: files, commits: commits, untracked: untracked}
 	}
 }
 
@@ -387,6 +394,21 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 	if msg.err != nil {
 		m.err = msg.err
 		return
+	}
+	if len(msg.untracked) > 0 {
+		untrackedSet := make(map[string]struct{}, len(msg.untracked))
+		for _, p := range msg.untracked {
+			untrackedSet[filepath.ToSlash(p)] = struct{}{}
+		}
+		for i := range msg.files {
+			name := msg.files[i].NewName
+			if name == "/dev/null" {
+				name = msg.files[i].OldName
+			}
+			if _, ok := untrackedSet[filepath.ToSlash(name)]; ok {
+				msg.files[i].Untracked = true
+			}
+		}
 	}
 	m.fileList = newFileList(msg.files)
 	m.fileList.review = m.review

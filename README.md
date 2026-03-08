@@ -26,7 +26,8 @@ cr abc123..def456               # Review a commit range
 cr -o review.md                 # Save review output to a file
 ```
 
-When run with no arguments on a feature branch, `cr` automatically diffs against `main` (or `master`), showing only the branch's changes from the merge base.
+When run with no arguments on a feature branch, `cr` automatically diffs against `main` (or `master`), showing branch changes from the merge base plus staged/unstaged/untracked working-tree changes.
+In the file list, untracked files are marked with `??`.
 
 ## Keys
 
@@ -59,6 +60,7 @@ When run with no arguments on a feature branch, `cr` automatically diffs against
 | `q` / `Ctrl+c` | Quit (prompts if review has unsaved comments) |
 
 Use `H`/`L` when you want screen-relative jumps (top/bottom visible row) to quickly start scrolling from the current viewport edge. `PgDn`/`PgUp` move by exactly one visible viewport height. `gg`/`G` remain full-diff jumps (first/last row).
+Long lines are soft-wrapped in the diff view (not truncated).
 
 ## Navigation Guarantees
 

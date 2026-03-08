@@ -152,7 +152,7 @@ func printUsage() {
 	fmt.Println(`cr - Code Review TUI
 
 Usage:
-  cr                          Review current branch vs main/master (auto-detect)
+  cr                          Review current branch vs main/master + staged/unstaged/untracked (auto-detect)
   cr --branch, -b             Explicitly diff current branch against main/master
   cr HEAD~1                   Review last commit
   cr HEAD~3..HEAD             Review last 3 commits
@@ -166,15 +166,15 @@ Keys:
   ]/[, →/←       Next/previous file
   h/l            Previous/next commit
   c              Enter comment mode at current line
-  R              Add general comment (multi-line)
-  Ctrl+r         View/manage general comments
+  R              Edit general comment (single text block)
+  Ctrl+r         Focus general comments panel
   Ctrl+s         Submit comment
   Enter          Newline in comment
   Ctrl+g         Open $EDITOR for comment
   Esc            Cancel comment / exit mode
   d              Delete comment at current line
   E              Edit comment at cursor
-  e              Toggle expanded view (hide file list)
+  e              Toggle full file context
   Tab            Toggle side-by-side vs unified diff
   Ctrl+d/u       Half page down/up
   s              Save & output review

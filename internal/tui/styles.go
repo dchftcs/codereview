@@ -66,6 +66,7 @@ var (
 	addedStyle               lipgloss.Style
 	removedStyle             lipgloss.Style
 	lineNumStyle             lipgloss.Style
+	relativeNumStyle         lipgloss.Style
 	selectedFileStyle        lipgloss.Style
 	normalFileStyle          lipgloss.Style
 	commentBorderStyle       lipgloss.Style
@@ -132,6 +133,12 @@ func applyTheme(name ThemeName) {
 	lineNumStyle = lipgloss.NewStyle().
 		Foreground(colorDim).
 		Width(5).
+		Align(lipgloss.Right)
+
+	relativeNumStyle = lipgloss.NewStyle().
+		Foreground(colorFg).
+		Background(colorBgLight).
+		Width(3).
 		Align(lipgloss.Right)
 
 	selectedFileStyle = lipgloss.NewStyle().

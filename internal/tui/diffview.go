@@ -40,6 +40,8 @@ type diffView struct {
 	comments  *review.Review
 	// Flattened rows for scrolling
 	rows []diffRow
+	// Maps currently rendered screen lines to logical row indices.
+	visibleRowMap []int
 	// Inline comment input
 	commentActive  bool
 	commentEditing bool
@@ -265,6 +267,7 @@ func (dv *diffView) findBestAnchorRow(anchor diffRowAnchor, fallbackLineNum int,
 
 func (dv *diffView) buildRows() {
 	dv.rows = nil
+	dv.visibleRowMap = nil
 	if dv.file == nil {
 		return
 	}
@@ -352,6 +355,10 @@ func (dv *diffView) moveCursorToViewportTop() {
 	if len(dv.rows) == 0 {
 		return
 	}
+	if len(dv.visibleRowMap) > 0 {
+		dv.cursorY = dv.visibleRowMap[0]
+		return
+	}
 	dv.cursorY = dv.scrollY
 	if dv.cursorY < 0 {
 		dv.cursorY = 0
@@ -364,6 +371,10 @@ func (dv *diffView) moveCursorToViewportTop() {
 // moveCursorToViewportBottom moves the cursor to the bottom visible row.
 func (dv *diffView) moveCursorToViewportBottom() {
 	if len(dv.rows) == 0 {
+		return
+	}
+	if n := len(dv.visibleRowMap); n > 0 {
+		dv.cursorY = dv.visibleRowMap[n-1]
 		return
 	}
 	viewportHeight := dv.contentViewportHeight()
@@ -418,6 +429,10 @@ func (dv *diffView) findMatches(term string) []int {
 // clickAt maps a Y coordinate (relative to diff content area top) to a row
 // and moves the cursor there.
 func (dv *diffView) clickAt(y int) {
+	if y >= 0 && y < len(dv.visibleRowMap) {
+		dv.cursorY = dv.visibleRowMap[y]
+		return
+	}
 	row := dv.scrollY + y
 	if row < 0 {
 		row = 0
@@ -666,89 +681,111 @@ func (dv *diffView) renderSideBySideContent() string {
 	if dv.showRelative() {
 		relGutter = 4 // 3 digits + 1 space
 	}
-	colWidth := (dv.width - 4 - relGutter) / 2 // account for border + separator + relative gutter
+	colWidth := (dv.width - 4 - (2 * relGutter)) / 2 // border + separator + relative gutters (LHS + RHS)
 	if colWidth < 20 {
 		colWidth = 20
 	}
 
 	var lines []string
+	var rowMap []int
 	viewportHeight := dv.contentViewportHeight()
-	end := dv.scrollY + viewportHeight
-	if end > len(dv.rows) {
-		end = len(dv.rows)
-	}
-
-	for i := dv.scrollY; i < end; i++ {
+	for i := dv.scrollY; i < len(dv.rows) && len(lines) < viewportHeight; i++ {
 		row := dv.rows[i]
 		isCursor := i == dv.cursorY
 
 		relPrefix := ""
 		if dv.showRelative() {
-			relPrefix = lineNumStyle.Width(3).Render(dv.relativeNumStr(i)) + " "
+			relPrefix = relativeNumStyle.Render(dv.relativeNumStr(i)) + " "
 		}
 
+		var rowLines []string
 		switch row.kind {
 		case rowSpacer:
-			lines = append(lines, "")
+			rowLines = append(rowLines, "")
 		case rowHunkHeader:
 			contentW := dv.width - 4 - relGutter
-			line := hunkHeaderStyle.Width(contentW).Render(row.hunk)
-			if isCursor {
-				line = cursorStyle.Width(contentW).Render(row.hunk)
+			for _, seg := range wrapToWidth(row.hunk, contentW) {
+				line := hunkHeaderStyle.Width(contentW).Render(seg)
+				if isCursor {
+					line = cursorStyle.Width(contentW).Render(seg)
+				}
+				rowLines = append(rowLines, relPrefix+line)
 			}
-			lines = append(lines, relPrefix+line)
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
+			rowLines = splitRenderedLines(relPrefix + commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
-			left := dv.renderSide(pair.Left, colWidth, true)
-			right := dv.renderSide(pair.Right, colWidth, false)
-			sep := lipgloss.NewStyle().Foreground(colorDim).Render("│")
-			rendered := lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
-			if isCursor || dv.isInSelection(i) {
-				rendered = withPersistentBg(rendered, bgHex(cursorStyle.GetBackground()))
-				visW := lipgloss.Width(rendered)
-				cw := dv.width - 4 - relGutter
-				if visW < cw {
-					rendered += strings.Repeat(" ", cw-visW)
-				}
-				rendered = cursorStyle.MaxWidth(cw).Render(rendered)
-			} else if dv.isInCommentRange(i) {
-				rendered = withPersistentBg(rendered, bgHex(commentRangeBgStyle.GetBackground()))
-				visW := lipgloss.Width(rendered)
-				cw := dv.width - 4 - relGutter
-				if visW < cw {
-					rendered += strings.Repeat(" ", cw-visW)
-				}
-				rendered = commentRangeBgStyle.MaxWidth(cw).Render(rendered)
+			leftLines := dv.renderSideWrapped(pair.Left, colWidth, true)
+			rightLines := dv.renderSideWrapped(pair.Right, colWidth, false)
+			n := len(leftLines)
+			if len(rightLines) > n {
+				n = len(rightLines)
 			}
-			lines = append(lines, relPrefix+rendered)
+			sep := lipgloss.NewStyle().Foreground(colorDim).Render("│")
+			for si := 0; si < n; si++ {
+				left := blankWidth(colWidth)
+				right := blankWidth(colWidth)
+				if si < len(leftLines) {
+					left = leftLines[si]
+				}
+				if si < len(rightLines) {
+					right = rightLines[si]
+				}
+				rightRelPrefix := ""
+				if dv.showRelative() {
+					rightRelPrefix = relativeNumStyle.Render(dv.relativeNumStr(i)) + " "
+				}
+				rendered := lipgloss.JoinHorizontal(lipgloss.Top, left, sep, rightRelPrefix+right)
+				cw := dv.width - 4 - relGutter - relGutter
+				if isCursor || dv.isInSelection(i) {
+					rendered = withPersistentBg(rendered, bgHex(cursorStyle.GetBackground()))
+					visW := lipgloss.Width(rendered)
+					if visW < cw {
+						rendered += strings.Repeat(" ", cw-visW)
+					}
+					rendered = cursorStyle.MaxWidth(cw).Render(rendered)
+				} else if dv.isInCommentRange(i) {
+					rendered = withPersistentBg(rendered, bgHex(commentRangeBgStyle.GetBackground()))
+					visW := lipgloss.Width(rendered)
+					if visW < cw {
+						rendered += strings.Repeat(" ", cw-visW)
+					}
+					rendered = commentRangeBgStyle.MaxWidth(cw).Render(rendered)
+				}
+				rowLines = append(rowLines, relPrefix+rendered)
+			}
+		}
+
+		for _, rl := range rowLines {
+			if len(lines) >= viewportHeight {
+				break
+			}
+			lines = append(lines, rl)
+			rowMap = append(rowMap, i)
 		}
 
 		if isCursor && dv.commentActive {
-			lines = append(lines, dv.renderInlineInput())
+			for _, il := range splitRenderedLines(dv.renderInlineInput()) {
+				if len(lines) >= viewportHeight {
+					break
+				}
+				lines = append(lines, il)
+				rowMap = append(rowMap, i)
+			}
 		}
 	}
+	dv.visibleRowMap = rowMap
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) string {
+func (dv *diffView) renderSideWrapped(line *diff.DiffLine, width int, isLeft bool) []string {
 	if line == nil {
-		return lipgloss.NewStyle().Width(width).Render("")
+		return []string{lipgloss.NewStyle().Width(width).Render("")}
 	}
 
 	content := line.Content
-
-	// Apply highlighting if available
-	if dv.highlight != nil && dv.file != nil {
-		filename := dv.file.NewName
-		if filename == "/dev/null" {
-			filename = dv.file.OldName
-		}
-		content = dv.highlight(filename, content)
-	}
 
 	var style lipgloss.Style
 	switch line.Op {
@@ -760,49 +797,77 @@ func (dv *diffView) renderSide(line *diff.DiffLine, width int, isLeft bool) stri
 		style = lipgloss.NewStyle()
 	}
 
-	var combined string
-	if dv.showAbsolute() {
-		num := line.OldNum
-		if !isLeft {
-			num = line.NewNum
+	filename := ""
+	if dv.highlight != nil && dv.file != nil {
+		filename = dv.file.NewName
+		if filename == "/dev/null" {
+			filename = dv.file.OldName
 		}
-		numStr := lineNumStyle.Render(fmt.Sprintf("%d", num))
-		textWidth := width - 6 // line number width (5) + space (1)
-		text := style.Render(truncate(content, textWidth))
-		combined = lipgloss.JoinHorizontal(lipgloss.Top, numStr, " ", text)
-	} else {
-		text := style.Render(truncate(content, width))
-		combined = text
 	}
 
-	// Pad to exact width manually to avoid lipgloss word-wrapping at hyphens.
-	visW := lipgloss.Width(combined)
-	if visW < width {
-		combined += strings.Repeat(" ", width-visW)
+	gutterWidth := 0
+	if dv.showAbsolute() {
+		gutterWidth = 6
 	}
+	textWidth := width - gutterWidth
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	chunks := wrapToWidth(content, textWidth)
 
-	// Apply subtle background shading for changed lines.
-	// Use withPersistentBg so the background shows through syntax highlighting.
-	// MaxWidth only (no Width) to prevent lipgloss from wrapping.
-	baseStyle := lipgloss.NewStyle().MaxWidth(width)
-	switch line.Op {
-	case diff.OpDelete:
-		combined = withPersistentBg(combined, bgHex(removedBgStyle.GetBackground()))
-		baseStyle = baseStyle.Background(removedBgStyle.GetBackground())
-	case diff.OpInsert:
-		combined = withPersistentBg(combined, bgHex(addedBgStyle.GetBackground()))
-		baseStyle = baseStyle.Background(addedBgStyle.GetBackground())
+	var out []string
+	for i, chunk := range chunks {
+		textChunk := chunk
+		if dv.highlight != nil && filename != "" {
+			textChunk = dv.highlight(filename, chunk)
+		}
+
+		var combined string
+		if dv.showAbsolute() {
+			numStr := lineNumStyle.Render(sideLineNum(line, isLeft, i))
+			combined = lipgloss.JoinHorizontal(lipgloss.Top, numStr, " ", style.Render(textChunk))
+		} else {
+			combined = style.Render(textChunk)
+		}
+
+		visW := lipgloss.Width(combined)
+		if visW < width {
+			combined += strings.Repeat(" ", width-visW)
+		}
+
+		baseStyle := lipgloss.NewStyle().MaxWidth(width)
+		switch line.Op {
+		case diff.OpDelete:
+			combined = withPersistentBg(combined, bgHex(removedBgStyle.GetBackground()))
+			baseStyle = baseStyle.Background(removedBgStyle.GetBackground())
+		case diff.OpInsert:
+			combined = withPersistentBg(combined, bgHex(addedBgStyle.GetBackground()))
+			baseStyle = baseStyle.Background(addedBgStyle.GetBackground())
+		}
+		out = append(out, baseStyle.Render(combined))
 	}
-	return baseStyle.Render(combined)
+	return out
+}
+
+func sideLineNum(line *diff.DiffLine, isLeft bool, chunkIdx int) string {
+	// Show absolute number only on the first wrapped segment.
+	if chunkIdx > 0 {
+		return ""
+	}
+	n := line.OldNum
+	if !isLeft {
+		n = line.NewNum
+	}
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func (dv *diffView) renderUnifiedContent() string {
 	var lines []string
+	var rowMap []int
 	viewportHeight := dv.contentViewportHeight()
-	end := dv.scrollY + viewportHeight
-	if end > len(dv.rows) {
-		end = len(dv.rows)
-	}
 
 	relGutter := 0
 	if dv.showRelative() {
@@ -814,41 +879,44 @@ func (dv *diffView) renderUnifiedContent() string {
 	}
 	contentWidth := dv.width - 4 - relGutter - absGutter // border + gutters
 
-	for i := dv.scrollY; i < end; i++ {
+	for i := dv.scrollY; i < len(dv.rows) && len(lines) < viewportHeight; i++ {
 		row := dv.rows[i]
 		isCursor := i == dv.cursorY
 
 		relPrefix := ""
 		if dv.showRelative() {
-			relPrefix = lineNumStyle.Width(3).Render(dv.relativeNumStr(i)) + " "
+			relPrefix = relativeNumStyle.Render(dv.relativeNumStr(i)) + " "
 		}
 
+		var rowLines []string
 		switch row.kind {
 		case rowSpacer:
-			lines = append(lines, "")
+			rowLines = append(rowLines, "")
 		case rowHunkHeader:
 			contentW := dv.width - 4 - relGutter
-			line := hunkHeaderStyle.Width(contentW).Render(row.hunk)
-			if isCursor {
-				line = cursorStyle.Width(contentW).Render(row.hunk)
+			for _, seg := range wrapToWidth(row.hunk, contentW) {
+				line := hunkHeaderStyle.Width(contentW).Render(seg)
+				if isCursor {
+					line = cursorStyle.Width(contentW).Render(seg)
+				}
+				rowLines = append(rowLines, relPrefix+line)
 			}
-			lines = append(lines, relPrefix+line)
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			lines = append(lines, relPrefix+commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
+			rowLines = splitRenderedLines(relPrefix + commentBorderStyle.Width(dv.width-6-relGutter).Render(commentText))
 		case rowDiffPair:
 			pair := row.pair
 			var rendered []string
 			// In unified mode, show delete then insert
 			if pair.Left != nil && pair.Left.Op == diff.OpDelete {
-				rendered = append(rendered, dv.renderUnifiedLine(pair.Left, contentWidth))
+				rendered = append(rendered, dv.renderUnifiedLineWrapped(pair.Left, contentWidth)...)
 			}
 			if pair.Right != nil && pair.Right.Op == diff.OpInsert {
-				rendered = append(rendered, dv.renderUnifiedLine(pair.Right, contentWidth))
+				rendered = append(rendered, dv.renderUnifiedLineWrapped(pair.Right, contentWidth)...)
 			}
 			// For equal lines, just show once
 			if pair.Left != nil && pair.Left.Op == diff.OpEqual {
-				rendered = append(rendered, dv.renderUnifiedLine(pair.Left, contentWidth))
+				rendered = append(rendered, dv.renderUnifiedLineWrapped(pair.Left, contentWidth)...)
 			}
 			for _, r := range rendered {
 				if isCursor || dv.isInSelection(i) {
@@ -868,19 +936,34 @@ func (dv *diffView) renderUnifiedContent() string {
 					}
 					r = commentRangeBgStyle.MaxWidth(cw).Render(r)
 				}
-				lines = append(lines, relPrefix+r)
+				rowLines = append(rowLines, relPrefix+r)
 			}
 		}
 
+		for _, rl := range rowLines {
+			if len(lines) >= viewportHeight {
+				break
+			}
+			lines = append(lines, rl)
+			rowMap = append(rowMap, i)
+		}
+
 		if isCursor && dv.commentActive {
-			lines = append(lines, dv.renderInlineInput())
+			for _, il := range splitRenderedLines(dv.renderInlineInput()) {
+				if len(lines) >= viewportHeight {
+					break
+				}
+				lines = append(lines, il)
+				rowMap = append(rowMap, i)
+			}
 		}
 	}
+	dv.visibleRowMap = rowMap
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
+func (dv *diffView) renderUnifiedLineWrapped(line *diff.DiffLine, width int) []string {
 	prefix := " "
 	style := lipgloss.NewStyle()
 
@@ -894,58 +977,71 @@ func (dv *diffView) renderUnifiedLine(line *diff.DiffLine, width int) string {
 	}
 
 	content := line.Content
+	textWidth := width - 1
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	chunks := wrapToWidth(content, textWidth)
+	filename := ""
 	if dv.highlight != nil && dv.file != nil {
-		filename := dv.file.NewName
+		filename = dv.file.NewName
 		if filename == "/dev/null" {
 			filename = dv.file.OldName
 		}
-		content = dv.highlight(filename, content)
 	}
-	text := style.Render(prefix + truncate(content, width))
 
-	var combined string
-	if dv.showAbsolute() {
-		oldNum := "     "
-		newNum := "     "
-		switch line.Op {
-		case diff.OpEqual:
-			oldNum = fmt.Sprintf("%5d", line.OldNum)
-			newNum = fmt.Sprintf("%5d", line.NewNum)
-		case diff.OpDelete:
-			oldNum = fmt.Sprintf("%5d", line.OldNum)
-		case diff.OpInsert:
-			newNum = fmt.Sprintf("%5d", line.NewNum)
+	var out []string
+	for i, chunk := range chunks {
+		textChunk := chunk
+		if dv.highlight != nil && filename != "" {
+			textChunk = dv.highlight(filename, chunk)
 		}
-		numStr := lipgloss.NewStyle().Foreground(colorDim).Render(oldNum + " " + newNum)
-		combined = numStr + " " + text
-	} else {
-		combined = text
-	}
+		text := style.Render(prefix + textChunk)
 
-	// Pad to exact width manually to avoid lipgloss word-wrapping at hyphens.
-	relGutter := 0
-	if dv.showRelative() {
-		relGutter = 4
-	}
-	lineWidth := dv.width - 4 - relGutter
-	visW := lipgloss.Width(combined)
-	if visW < lineWidth {
-		combined += strings.Repeat(" ", lineWidth-visW)
-	}
+		var combined string
+		if dv.showAbsolute() {
+			oldNum := "     "
+			newNum := "     "
+			if i == 0 {
+				switch line.Op {
+				case diff.OpEqual:
+					oldNum = fmt.Sprintf("%5d", line.OldNum)
+					newNum = fmt.Sprintf("%5d", line.NewNum)
+				case diff.OpDelete:
+					oldNum = fmt.Sprintf("%5d", line.OldNum)
+				case diff.OpInsert:
+					newNum = fmt.Sprintf("%5d", line.NewNum)
+				}
+			}
+			numStr := lipgloss.NewStyle().Foreground(colorDim).Render(oldNum + " " + newNum)
+			combined = numStr + " " + text
+		} else {
+			combined = text
+		}
 
-	// Apply subtle background shading for changed lines.
-	// Use withPersistentBg so the background shows through syntax highlighting.
-	// MaxWidth only (no Width) to prevent lipgloss from wrapping.
-	baseStyle := lipgloss.NewStyle().MaxWidth(lineWidth)
-	switch line.Op {
-	case diff.OpDelete:
-		combined = withPersistentBg(combined, bgHex(removedBgStyle.GetBackground()))
-		baseStyle = baseStyle.Background(removedBgStyle.GetBackground())
-	case diff.OpInsert:
-		combined = withPersistentBg(combined, bgHex(addedBgStyle.GetBackground()))
-		baseStyle = baseStyle.Background(addedBgStyle.GetBackground())
+		relGutter := 0
+		if dv.showRelative() {
+			relGutter = 4
+		}
+		lineWidth := dv.width - 4 - relGutter
+		visW := lipgloss.Width(combined)
+		if visW < lineWidth {
+			combined += strings.Repeat(" ", lineWidth-visW)
+		}
+
+		baseStyle := lipgloss.NewStyle().MaxWidth(lineWidth)
+		switch line.Op {
+		case diff.OpDelete:
+			combined = withPersistentBg(combined, bgHex(removedBgStyle.GetBackground()))
+			baseStyle = baseStyle.Background(removedBgStyle.GetBackground())
+		case diff.OpInsert:
+			combined = withPersistentBg(combined, bgHex(addedBgStyle.GetBackground()))
+			baseStyle = baseStyle.Background(addedBgStyle.GetBackground())
+		}
+		out = append(out, baseStyle.Render(combined))
+		prefix = " "
 	}
-	return baseStyle.Render(combined)
+	return out
 }
 
 func (dv *diffView) renderInlineInput() string {
@@ -1047,6 +1143,57 @@ func truncate(s string, maxWidth int) string {
 		return string(runes[:maxWidth-1]) + "…"
 	}
 	return stripped
+}
+
+func wrapToWidth(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{""}
+	}
+	if s == "" {
+		return []string{""}
+	}
+	var out []string
+	runes := []rune(s)
+	start := 0
+	for start < len(runes) {
+		end := start
+		width := 0
+		for end < len(runes) {
+			rw := lipgloss.Width(string(runes[end]))
+			if rw <= 0 {
+				rw = 1
+			}
+			if width+rw > maxWidth {
+				break
+			}
+			width += rw
+			end++
+		}
+		if end == start {
+			end++
+		}
+		out = append(out, string(runes[start:end]))
+		start = end
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func splitRenderedLines(s string) []string {
+	parts := strings.Split(s, "\n")
+	if len(parts) == 0 {
+		return []string{""}
+	}
+	return parts
+}
+
+func blankWidth(w int) string {
+	if w <= 0 {
+		return ""
+	}
+	return strings.Repeat(" ", w)
 }
 
 func stripAnsi(s string) string {

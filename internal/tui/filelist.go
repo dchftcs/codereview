@@ -43,8 +43,8 @@ type fileList struct {
 	mode          fileListMode
 	repoRoot      string
 	modifiedIndex map[string]int
-	root          *treeNode         // full filesystem tree root
-	modifiedRoot  *treeNode         // modified-only tree root
+	root          *treeNode // full filesystem tree root
+	modifiedRoot  *treeNode // modified-only tree root
 	treeRows      []treeRow
 	treeSelected  int
 	treeOffset    int
@@ -817,7 +817,13 @@ func (fl *fileList) viewTree(width int) string {
 		}
 
 		if modified {
-			label = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("* "+label) + stat
+			marker := "* "
+			markerStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+			if modIdx >= 0 && modIdx < len(fl.files) && fl.files[modIdx].Untracked {
+				marker = "??"
+				markerStyle = lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+			}
+			label = markerStyle.Render(marker+label) + stat
 		} else {
 			label = "  " + label
 		}

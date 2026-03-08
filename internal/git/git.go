@@ -44,6 +44,16 @@ func DiffFull(revSpec string) (string, error) {
 	return diffInternal(revSpec, true)
 }
 
+// DiffUnstaged returns only unstaged tracked changes plus untracked files.
+func DiffUnstaged() (string, error) {
+	return diffUnstagedInternal(false)
+}
+
+// DiffUnstagedFull returns only unstaged tracked changes plus untracked files with full context.
+func DiffUnstagedFull() (string, error) {
+	return diffUnstagedInternal(true)
+}
+
 func diffInternal(revSpec string, fullContext bool) (string, error) {
 	ctx := []string{}
 	if fullContext {
@@ -82,6 +92,18 @@ func diffInternal(revSpec string, fullContext bool) (string, error) {
 	// Single commit — use show to handle root commits (no parent)
 	args := append([]string{"show", "--format="}, append(ctx, revSpec)...)
 	return run(args...)
+}
+
+func diffUnstagedInternal(fullContext bool) (string, error) {
+	ctx := []string{}
+	if fullContext {
+		ctx = []string{"-U99999"}
+	}
+	out, err := run(append([]string{"diff"}, ctx...)...)
+	if err != nil {
+		return "", err
+	}
+	return appendUntrackedDiff(out, fullContext)
 }
 
 // Show returns the diff for a single commit.

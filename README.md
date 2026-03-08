@@ -19,6 +19,7 @@ go build -o cr ./cmd/cr/
 ```bash
 cr                              # Review current branch vs main/master (auto-detect)
 cr -b, --branch                 # Explicitly diff current branch against main/master
+cr -u, --unstaged               # Review only unstaged tracked changes + untracked files
 cr HEAD~1                       # Review the last commit
 cr HEAD~3..HEAD                 # Review a range of commits
 cr abc123                       # Review a specific commit
@@ -28,6 +29,7 @@ cr -o review.md                 # Save review output to a file
 
 When run with no arguments on a feature branch, `cr` automatically diffs against `main` (or `master`), showing branch changes from the merge base plus staged/unstaged/untracked working-tree changes.
 In the file list, untracked files are marked with `??`.
+`--unstaged` shows only unstaged tracked changes (working tree vs index) plus untracked files.
 
 ## Keys
 
@@ -77,6 +79,15 @@ Pressing `s` outputs a markdown document (to stdout or a file with `-o`) structu
 
 **Commit:** abc1234 feat: add user auth
 
+## Diff Context
+
+- LHS (base): `merge-base(main,HEAD)`
+- RHS (target): `HEAD`
+- Includes staged changes on RHS: yes
+- Includes unstaged changes on RHS: yes
+- Includes untracked files on RHS: yes
+- Inline comment locations (`file:line` / `file:start-end`) are relative to this git diff view.
+
 ## File: `src/auth.go`
 
 Inline comments: 2
@@ -110,7 +121,8 @@ Add tests for invalid/expired tokens.
 ````
 
 Inline comments are grouped by file, files are sorted alphabetically, and comments are sorted by line number.  
-Each inline comment includes the location (`added` / `modified` / `context` / `deleted`), a small snippet centered on the commented line, and feedback text.  
+`REVIEW.md` includes a **Diff Context** section that defines LHS/RHS and whether RHS includes staged/unstaged/untracked changes.  
+Inline comment locations are diff-view-relative (`file:line` / `file:start-end` against that LHS/RHS context), followed by a snippet and feedback text.  
 If no snippet can be resolved from the current diff context, output uses:
 
 ```markdown

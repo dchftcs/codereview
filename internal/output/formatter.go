@@ -19,6 +19,21 @@ func FormatMarkdown(rev *review.Review, files []diff.FileDiff) string {
 		sb.WriteString(fmt.Sprintf("**Commit:** %s %s\n\n", rev.CommitHash, rev.CommitSubject))
 	}
 
+	if rev.DiffLeft != "" || rev.DiffRight != "" {
+		sb.WriteString("## Diff Context\n\n")
+		if rev.DiffLeft != "" {
+			sb.WriteString(fmt.Sprintf("- LHS (base): `%s`\n", rev.DiffLeft))
+		}
+		if rev.DiffRight != "" {
+			sb.WriteString(fmt.Sprintf("- RHS (target): `%s`\n", rev.DiffRight))
+		}
+		sb.WriteString(fmt.Sprintf("- Includes staged changes on RHS: %s\n", yesNo(rev.IncludesStaged)))
+		sb.WriteString(fmt.Sprintf("- Includes unstaged changes on RHS: %s\n", yesNo(rev.IncludesUnstaged)))
+		sb.WriteString(fmt.Sprintf("- Includes untracked files on RHS: %s\n", yesNo(rev.IncludesUntracked)))
+		sb.WriteString("- Inline comment locations (`file:line` / `file:start-end`) are relative to this git diff view.\n")
+		sb.WriteString("\n")
+	}
+
 	// Group comments by file
 	commentsByFile := make(map[string][]review.Comment)
 	for _, c := range rev.Comments {
@@ -171,4 +186,11 @@ func fileExtension(filename string) string {
 		return parts[len(parts)-1]
 	}
 	return ""
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }

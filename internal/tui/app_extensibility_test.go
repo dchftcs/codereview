@@ -19,6 +19,14 @@ type fakeGitService struct {
 	diffFullCalls   int
 	diffFullRevSpec string
 
+	diffUnstagedOut   string
+	diffUnstagedErr   error
+	diffUnstagedCalls int
+
+	diffUnstagedFullOut   string
+	diffUnstagedFullErr   error
+	diffUnstagedFullCalls int
+
 	logOut   []gitpkg.CommitInfo
 	logErr   error
 	logCalls int
@@ -39,6 +47,16 @@ func (f *fakeGitService) DiffFull(revSpec string) (string, error) {
 	f.diffFullCalls++
 	f.diffFullRevSpec = revSpec
 	return f.diffFullOut, f.diffFullErr
+}
+
+func (f *fakeGitService) DiffUnstaged() (string, error) {
+	f.diffUnstagedCalls++
+	return f.diffUnstagedOut, f.diffUnstagedErr
+}
+
+func (f *fakeGitService) DiffUnstagedFull() (string, error) {
+	f.diffUnstagedFullCalls++
+	return f.diffUnstagedFullOut, f.diffUnstagedFullErr
 }
 
 func (f *fakeGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
@@ -94,6 +112,47 @@ func TestLoadDiffUsesInjectedGitService(t *testing.T) {
 	}
 	if !reflect.DeepEqual(msg.commits, fake.logOut) {
 		t.Fatalf("commits = %#v, want %#v", msg.commits, fake.logOut)
+	}
+}
+
+func TestLoadDiffUnstagedUsesInjectedGitService(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{
+		diffUnstagedOut: "",
+		logOut:          []gitpkg.CommitInfo{{Hash: "abc123", Subject: "test commit"}},
+	}
+	m := NewModel(Config{UnstagedOnly: true, Git: fake})
+
+	msg := m.loadDiff()().(diffLoadedMsg)
+	if msg.err != nil {
+		t.Fatalf("loadDiff returned error: %v", msg.err)
+	}
+	if fake.diffUnstagedCalls != 1 {
+		t.Fatalf("DiffUnstaged call count = %d, want 1", fake.diffUnstagedCalls)
+	}
+	if fake.diffCalls != 0 {
+		t.Fatalf("Diff call count = %d, want 0 in unstaged mode", fake.diffCalls)
+	}
+}
+
+func TestLoadExpandedDiffUnstagedUsesInjectedGitService(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{
+		diffUnstagedFullOut: "",
+	}
+	m := NewModel(Config{UnstagedOnly: true, Git: fake})
+
+	msg := m.loadExpandedDiff()().(expandLoadedMsg)
+	if msg.err != nil {
+		t.Fatalf("loadExpandedDiff returned error: %v", msg.err)
+	}
+	if fake.diffUnstagedFullCalls != 1 {
+		t.Fatalf("DiffUnstagedFull call count = %d, want 1", fake.diffUnstagedFullCalls)
+	}
+	if fake.diffFullCalls != 0 {
+		t.Fatalf("DiffFull call count = %d, want 0 in unstaged mode", fake.diffFullCalls)
 	}
 }
 

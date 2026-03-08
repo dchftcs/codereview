@@ -15,7 +15,7 @@ import (
 
 func main() {
 	noArgs := len(os.Args) == 1
-	revSpec, outputFile, branchMode, theme, err := parseArgs()
+	revSpec, outputFile, branchMode, unstagedMode, theme, err := parseArgs()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
 		printUsage()
@@ -23,7 +23,7 @@ func main() {
 	}
 
 	// If --branch flag or no args on a feature branch, diff against default branch
-	if branchMode || revSpec == "" {
+	if !unstagedMode && (branchMode || revSpec == "") {
 		branch, err := gitpkg.CurrentBranch()
 		if err == nil {
 			defaultBranch := gitpkg.DefaultBranch()
@@ -37,6 +37,7 @@ func main() {
 
 	cfg := tui.Config{
 		RevSpec:      revSpec,
+		UnstagedOnly: unstagedMode,
 		OutputFile:   outputFile,
 		PromptSaveAs: noArgs,
 		Highlight:    highlight.Line,
@@ -70,7 +71,7 @@ func main() {
 	}
 }
 
-func parseArgs() (revSpec, outputFile string, branchMode bool, theme tui.ThemeName, err error) {
+func parseArgs() (revSpec, outputFile string, branchMode, unstagedMode bool, theme tui.ThemeName, err error) {
 	theme = detectTheme()
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -80,7 +81,7 @@ func parseArgs() (revSpec, outputFile string, branchMode bool, theme tui.ThemeNa
 		if strings.HasPrefix(arg, "--theme=") {
 			theme, err = parseThemeValue(strings.TrimPrefix(arg, "--theme="))
 			if err != nil {
-				return "", "", false, "", err
+				return "", "", false, false, "", err
 			}
 			continue
 		}
@@ -88,30 +89,38 @@ func parseArgs() (revSpec, outputFile string, branchMode bool, theme tui.ThemeNa
 		switch arg {
 		case "--theme":
 			if i+1 >= len(args) {
-				return "", "", false, "", fmt.Errorf("missing value for %s", arg)
+				return "", "", false, false, "", fmt.Errorf("missing value for %s", arg)
 			}
 			theme, err = parseThemeValue(args[i+1])
 			if err != nil {
-				return "", "", false, "", err
+				return "", "", false, false, "", err
 			}
 			i++
 		case "--output", "-o":
 			if i+1 >= len(args) {
-				return "", "", false, "", fmt.Errorf("missing value for %s", arg)
+				return "", "", false, false, "", fmt.Errorf("missing value for %s", arg)
 			}
 			outputFile = args[i+1]
 			i++
 		case "--branch", "-b":
 			branchMode = true
+		case "--unstaged", "-u":
+			unstagedMode = true
 		case "--help", "-h":
 			printUsage()
 			os.Exit(0)
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return "", "", false, "", fmt.Errorf("unknown flag: %s", arg)
+				return "", "", false, false, "", fmt.Errorf("unknown flag: %s", arg)
 			}
 			revSpec = arg
 		}
+	}
+	if unstagedMode && branchMode {
+		return "", "", false, false, "", fmt.Errorf("--unstaged cannot be combined with --branch")
+	}
+	if unstagedMode && revSpec != "" {
+		return "", "", false, false, "", fmt.Errorf("--unstaged cannot be combined with a revision argument")
 	}
 	return
 }
@@ -154,6 +163,7 @@ func printUsage() {
 Usage:
   cr                          Review current branch vs main/master + staged/unstaged/untracked (auto-detect)
   cr --branch, -b             Explicitly diff current branch against main/master
+  cr --unstaged, -u           Review only unstaged tracked changes + untracked files
   cr HEAD~1                   Review last commit
   cr HEAD~3..HEAD             Review last 3 commits
   cr abc123                   Review specific commit

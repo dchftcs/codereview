@@ -19,9 +19,14 @@ func TestFormatMarkdownDeterministicFileOrderingAndInlineBlocks(t *testing.T) {
 			{File: "a.go", Line: 1, Text: "context line comment"},
 			{File: "missing.go", Line: 99, Text: "no file context"},
 		},
-		GeneralComments: []string{"overall notes\nsecond line"},
-		CommitHash:      "abc123",
-		CommitSubject:   "subject",
+		GeneralComments:   []string{"overall notes\nsecond line"},
+		CommitHash:        "abc123",
+		CommitSubject:     "subject",
+		DiffLeft:          "merge-base(main,HEAD)",
+		DiffRight:         "HEAD",
+		IncludesStaged:    true,
+		IncludesUnstaged:  true,
+		IncludesUntracked: true,
 	}
 
 	files := []diff.FileDiff{
@@ -52,6 +57,13 @@ func TestFormatMarkdownDeterministicFileOrderingAndInlineBlocks(t *testing.T) {
 	assertOrdered(t, out, "## File: `a.go`", "## File: `missing.go`", "## File: `z.go`", "## General Comments")
 
 	mustContain(t, out, "**Commit:** abc123 subject")
+	mustContain(t, out, "## Diff Context")
+	mustContain(t, out, "- LHS (base): `merge-base(main,HEAD)`")
+	mustContain(t, out, "- RHS (target): `HEAD`")
+	mustContain(t, out, "- Includes staged changes on RHS: yes")
+	mustContain(t, out, "- Includes unstaged changes on RHS: yes")
+	mustContain(t, out, "- Includes untracked files on RHS: yes")
+	mustContain(t, out, "- Inline comment locations (`file:line` / `file:start-end`) are relative to this git diff view.")
 
 	// New location format: file:line (no classification)
 	mustContain(t, out, "### `a.go:1`")

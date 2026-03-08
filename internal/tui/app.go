@@ -45,6 +45,8 @@ const (
 type GitService interface {
 	Diff(revSpec string) (string, error)
 	DiffFull(revSpec string) (string, error)
+	DiffUnstaged() (string, error)
+	DiffUnstagedFull() (string, error)
 	Log(n int) ([]gitpkg.CommitInfo, error)
 	UntrackedFiles() ([]string, error)
 }
@@ -59,6 +61,14 @@ func (defaultGitService) DiffFull(revSpec string) (string, error) {
 	return gitpkg.DiffFull(revSpec)
 }
 
+func (defaultGitService) DiffUnstaged() (string, error) {
+	return gitpkg.DiffUnstaged()
+}
+
+func (defaultGitService) DiffUnstagedFull() (string, error) {
+	return gitpkg.DiffUnstagedFull()
+}
+
 func (defaultGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
 	return gitpkg.Log(n)
 }
@@ -70,6 +80,7 @@ func (defaultGitService) UntrackedFiles() ([]string, error) {
 // Config holds TUI startup configuration.
 type Config struct {
 	RevSpec      string
+	UnstagedOnly bool
 	OutputFile   string
 	PromptSaveAs bool
 	Highlight    func(filename, content string) string
@@ -151,8 +162,58 @@ func NewModel(cfg Config) Model {
 		fileStates:     make(map[string]fileState),
 		referenceFiles: make(map[string]*diff.FileDiff),
 	}
+	applyDiffContext(m.review, cfg.RevSpec, cfg.UnstagedOnly)
 	m.generalPanel.review = m.review
 	return m
+}
+
+func applyDiffContext(rev *review.Review, revSpec string, unstagedOnly bool) {
+	rev.DiffLeft = ""
+	rev.DiffRight = ""
+	rev.IncludesStaged = false
+	rev.IncludesUnstaged = false
+	rev.IncludesUntracked = false
+
+	if unstagedOnly {
+		rev.DiffLeft = "index"
+		rev.DiffRight = "working tree"
+		rev.IncludesUnstaged = true
+		rev.IncludesUntracked = true
+		return
+	}
+
+	if revSpec == "" {
+		rev.DiffLeft = "HEAD"
+		rev.DiffRight = "working tree"
+		rev.IncludesStaged = true
+		rev.IncludesUnstaged = true
+		rev.IncludesUntracked = true
+		return
+	}
+
+	if strings.Contains(revSpec, "...") {
+		parts := strings.SplitN(revSpec, "...", 2)
+		base, head := parts[0], parts[1]
+		rev.DiffLeft = fmt.Sprintf("merge-base(%s,%s)", base, head)
+		rev.DiffRight = head
+		if head == "HEAD" {
+			rev.IncludesStaged = true
+			rev.IncludesUnstaged = true
+			rev.IncludesUntracked = true
+		}
+		return
+	}
+
+	if strings.Contains(revSpec, "..") {
+		parts := strings.SplitN(revSpec, "..", 2)
+		rev.DiffLeft = parts[0]
+		rev.DiffRight = parts[1]
+		return
+	}
+
+	// Single-commit mode (`git show <commit>`): parent on LHS, commit on RHS.
+	rev.DiffLeft = revSpec + "^"
+	rev.DiffRight = revSpec
 }
 
 func (m Model) Init() tea.Cmd {
@@ -168,7 +229,15 @@ type diffLoadedMsg struct {
 
 func (m Model) loadDiff() tea.Cmd {
 	return func() tea.Msg {
-		rawDiff, err := m.git.Diff(m.config.RevSpec)
+		var (
+			rawDiff string
+			err     error
+		)
+		if m.config.UnstagedOnly {
+			rawDiff, err = m.git.DiffUnstaged()
+		} else {
+			rawDiff, err = m.git.Diff(m.config.RevSpec)
+		}
 		if err != nil {
 			return diffLoadedMsg{err: err}
 		}
@@ -209,7 +278,15 @@ func editorCmd() string {
 
 func (m Model) loadExpandedDiff() tea.Cmd {
 	return func() tea.Msg {
-		rawDiff, err := m.git.DiffFull(m.config.RevSpec)
+		var (
+			rawDiff string
+			err     error
+		)
+		if m.config.UnstagedOnly {
+			rawDiff, err = m.git.DiffUnstagedFull()
+		} else {
+			rawDiff, err = m.git.DiffFull(m.config.RevSpec)
+		}
 		if err != nil {
 			return expandLoadedMsg{err: err}
 		}
@@ -1489,6 +1566,8 @@ func (m *Model) navigateCommit(delta int) tea.Cmd {
 	m.referenceFiles = make(map[string]*diff.FileDiff)
 	commit := m.commits[newIdx]
 	m.config.RevSpec = commit.Hash
+	m.config.UnstagedOnly = false
+	applyDiffContext(m.review, commit.Hash, false)
 	m.review.CommitHash = commit.Hash
 	m.review.CommitSubject = commit.Subject
 
@@ -1545,6 +1624,8 @@ func (m Model) renderHeader() string {
 	if len(m.commits) > 0 && m.commitIdx < len(m.commits) {
 		c := m.commits[m.commitIdx]
 		headerText = fmt.Sprintf(" [%s] %s", c.Hash, c.Subject)
+	} else if m.config.UnstagedOnly {
+		headerText = " [unstaged diff] unstaged + untracked"
 	} else if strings.Contains(m.config.RevSpec, "...") {
 		headerText = fmt.Sprintf(" [branch diff] %s", m.config.RevSpec)
 	} else if m.config.RevSpec == "" {

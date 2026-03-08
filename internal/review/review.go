@@ -10,10 +10,15 @@ type Comment struct {
 
 // Review holds all comments and metadata for a code review session.
 type Review struct {
-	Comments        []Comment `json:"comments"`
-	GeneralComments []string  `json:"general_comments,omitempty"`
-	CommitHash      string    `json:"commit_hash,omitempty"`
-	CommitSubject   string    `json:"commit_subject,omitempty"`
+	Comments          []Comment `json:"comments"`
+	GeneralComments   []string  `json:"general_comments,omitempty"`
+	CommitHash        string    `json:"commit_hash,omitempty"`
+	CommitSubject     string    `json:"commit_subject,omitempty"`
+	DiffLeft          string    `json:"diff_left,omitempty"`
+	DiffRight         string    `json:"diff_right,omitempty"`
+	IncludesStaged    bool      `json:"includes_staged,omitempty"`
+	IncludesUnstaged  bool      `json:"includes_unstaged,omitempty"`
+	IncludesUntracked bool      `json:"includes_untracked,omitempty"`
 }
 
 func New() *Review {

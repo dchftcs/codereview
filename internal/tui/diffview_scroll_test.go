@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -226,6 +227,374 @@ func TestRelativeNumbersDoNotAdvanceAcrossCommentRows(t *testing.T) {
 	}
 	if got := dv.relativeNumStr(3); got != "  1" {
 		t.Fatalf("next diff row relative = %q, want %q", got, "  1")
+	}
+}
+
+func TestRenderCachesHighlightAcrossRedraws(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeLargeFileDiff(40), review.New())
+
+	highlightCalls := 0
+	dv.highlight = func(filename, content string) string {
+		highlightCalls++
+		return content
+	}
+
+	_ = dv.renderSideBySideContent()
+	firstCalls := highlightCalls
+	if firstCalls == 0 {
+		t.Fatal("expected initial render to call highlighter")
+	}
+
+	_ = dv.renderSideBySideContent()
+	if highlightCalls != firstCalls {
+		t.Fatalf("expected cached redraw to avoid new highlight calls, got first=%d second=%d", firstCalls, highlightCalls)
+	}
+
+	dv.scrollY += 2
+	_ = dv.renderSideBySideContent()
+	if highlightCalls < firstCalls {
+		t.Fatalf("unexpected highlight call count regression: first=%d now=%d", firstCalls, highlightCalls)
+	}
+}
+
+func TestRenderCachesHighlightAcrossRedrawsUnified(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.mode = viewUnified
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeLargeFileDiff(40), review.New())
+
+	highlightCalls := 0
+	dv.highlight = func(filename, content string) string {
+		highlightCalls++
+		return content
+	}
+
+	_ = dv.renderUnifiedContent()
+	firstCalls := highlightCalls
+	if firstCalls == 0 {
+		t.Fatal("expected initial unified render to call highlighter")
+	}
+
+	_ = dv.renderUnifiedContent()
+	if highlightCalls != firstCalls {
+		t.Fatalf("expected cached unified redraw to avoid new highlight calls, got first=%d second=%d", firstCalls, highlightCalls)
+	}
+}
+
+func TestRenderCachesResetOnSetFile(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeLargeFileDiff(40), review.New())
+	dv.highlight = func(filename, content string) string { return content }
+
+	_ = dv.renderSideBySideContent()
+	if len(dv.highlightCache) == 0 || len(dv.wrapCache) == 0 {
+		t.Fatalf("expected caches to populate, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+
+	dv.setFile(makeLargeFileDiff(10), review.New())
+	if len(dv.highlightCache) != 0 || len(dv.wrapCache) != 0 {
+		t.Fatalf("expected caches reset on setFile, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+}
+
+func TestRenderCachesResetOnSetFileKeepPosition(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	base := makeLargeFileDiff(40)
+	dv.setFile(base, review.New())
+	dv.highlight = func(filename, content string) string { return content }
+
+	_ = dv.renderSideBySideContent()
+	if len(dv.highlightCache) == 0 || len(dv.wrapCache) == 0 {
+		t.Fatalf("expected caches to populate, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+
+	dv.cursorY = 5
+	dv.scrollY = 2
+	dv.setFileKeepPosition(makeLargeFileDiff(41), review.New())
+	if len(dv.highlightCache) != 0 || len(dv.wrapCache) != 0 {
+		t.Fatalf("expected caches reset on setFileKeepPosition, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+}
+
+func TestWrapCacheRespectsWidthChanges(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeLargeFileDiff(1), review.New())
+
+	line := &diff.DiffLine{
+		Op:      diff.OpEqual,
+		Content: strings.Repeat("abcdefghij", 12),
+		OldNum:  1,
+		NewNum:  1,
+	}
+
+	wide := dv.renderSideWrapped(line, 50, true)
+	narrow := dv.renderSideWrapped(line, 20, true)
+
+	if len(narrow) <= len(wide) {
+		t.Fatalf("expected narrower width to produce more wrapped lines, got wide=%d narrow=%d", len(wide), len(narrow))
+	}
+}
+
+func TestWrapCacheRespectsWidthChangesUnified(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeLargeFileDiff(1), review.New())
+
+	line := &diff.DiffLine{
+		Op:      diff.OpEqual,
+		Content: strings.Repeat("abcdefghij", 12),
+		OldNum:  1,
+		NewNum:  1,
+	}
+
+	wide := dv.renderUnifiedLineWrapped(line, 50)
+	narrow := dv.renderUnifiedLineWrapped(line, 20)
+
+	if len(narrow) <= len(wide) {
+		t.Fatalf("expected narrower unified width to produce more wrapped lines, got wide=%d narrow=%d", len(wide), len(narrow))
+	}
+}
+
+func TestHighlightChunkGuardsDoNotPopulateCache(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.highlight = nil
+
+	if got := dv.highlightChunk("a.go", "x"); got != "x" {
+		t.Fatalf("highlightChunk with nil highlighter = %q, want %q", got, "x")
+	}
+	if got := dv.highlightChunk("", "x"); got != "x" {
+		t.Fatalf("highlightChunk with empty filename = %q, want %q", got, "x")
+	}
+	// install a highlighter but pass empty chunk
+	dv.highlight = func(filename, content string) string { return "!" + content }
+	if got := dv.highlightChunk("a.go", ""); got != "" {
+		t.Fatalf("highlightChunk with empty chunk = %q, want empty", got)
+	}
+	if len(dv.highlightCache) != 0 {
+		t.Fatalf("expected highlight cache to stay empty on guard paths, got %d entries", len(dv.highlightCache))
+	}
+}
+
+func TestRenderCachesWithInsertDeleteLines(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 100
+	dv.height = 10
+	dv.setFile(makeDuplicateLineNumDiff(), review.New())
+
+	highlightCalls := 0
+	dv.highlight = func(filename, content string) string {
+		highlightCalls++
+		return content
+	}
+
+	_ = dv.renderSideBySideContent()
+	firstCalls := highlightCalls
+	if firstCalls == 0 {
+		t.Fatal("expected highlight calls on first render")
+	}
+	_ = dv.renderSideBySideContent()
+	if highlightCalls != firstCalls {
+		t.Fatalf("expected cache hit on second render with insert/delete lines, first=%d second=%d", firstCalls, highlightCalls)
+	}
+}
+
+func TestResetRenderCachesWhenAlreadyEmpty(t *testing.T) {
+	t.Parallel()
+
+	dv := newDiffView()
+	dv.width = 80
+	dv.height = 10
+
+	dv.setFile(makeLargeFileDiff(3), review.New())
+	if len(dv.highlightCache) != 0 || len(dv.wrapCache) != 0 {
+		t.Fatalf("expected empty caches after initial setFile without render, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+
+	// Call setFile again without warming caches first.
+	dv.setFile(makeLargeFileDiff(4), review.New())
+	if len(dv.highlightCache) != 0 || len(dv.wrapCache) != 0 {
+		t.Fatalf("expected empty caches after repeated setFile without render, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	}
+}
+
+func TestRenderSideBySideOutputStableAfterCacheWarmup(t *testing.T) {
+	t.Parallel()
+
+	file := makeLargeFileDiff(80)
+	rev := review.New()
+
+	dv := newDiffView()
+	dv.width = 110
+	dv.height = 14
+	dv.setFile(file, rev)
+	dv.cursorY = 12
+	dv.scrollY = 6
+	dv.highlight = func(filename, content string) string {
+		return "[" + filename + "]" + content
+	}
+
+	first := dv.renderSideBySideContent()
+	second := dv.renderSideBySideContent()
+	if first != second {
+		t.Fatal("side-by-side render changed after cache warmup")
+	}
+}
+
+func TestRenderUnifiedOutputStableAfterCacheWarmup(t *testing.T) {
+	t.Parallel()
+
+	file := makeLargeFileDiff(80)
+	rev := review.New()
+
+	dv := newDiffView()
+	dv.mode = viewUnified
+	dv.width = 110
+	dv.height = 14
+	dv.setFile(file, rev)
+	dv.cursorY = 12
+	dv.scrollY = 6
+	dv.highlight = func(filename, content string) string {
+		return "[" + filename + "]" + content
+	}
+
+	first := dv.renderUnifiedContent()
+	second := dv.renderUnifiedContent()
+	if first != second {
+		t.Fatal("unified render changed after cache warmup")
+	}
+}
+
+func TestRenderOutputMatchesFreshInstanceWithSameState(t *testing.T) {
+	t.Parallel()
+
+	file := makeLargeFileDiff(90)
+	rev := review.New()
+
+	highlight := func(filename, content string) string {
+		return "<hl>" + content
+	}
+
+	warm := newDiffView()
+	warm.width = 120
+	warm.height = 16
+	warm.setFile(file, rev)
+	warm.cursorY = 18
+	warm.scrollY = 9
+	warm.highlight = highlight
+	_ = warm.renderSideBySideContent() // warm caches
+	got := warm.renderSideBySideContent()
+
+	fresh := newDiffView()
+	fresh.width = 120
+	fresh.height = 16
+	fresh.setFile(file, rev)
+	fresh.cursorY = 18
+	fresh.scrollY = 9
+	fresh.highlight = highlight
+	want := fresh.renderSideBySideContent()
+
+	if got != want {
+		t.Fatal("cached render output differs from fresh render output for same state")
+	}
+}
+
+func TestRenderUnifiedOutputMatchesFreshInstanceWithSameState(t *testing.T) {
+	t.Parallel()
+
+	file := makeLargeFileDiff(90)
+	rev := review.New()
+
+	highlight := func(filename, content string) string {
+		return "<hl>" + content
+	}
+
+	warm := newDiffView()
+	warm.mode = viewUnified
+	warm.width = 120
+	warm.height = 16
+	warm.setFile(file, rev)
+	warm.cursorY = 18
+	warm.scrollY = 9
+	warm.highlight = highlight
+	_ = warm.renderUnifiedContent() // warm caches
+	got := warm.renderUnifiedContent()
+
+	fresh := newDiffView()
+	fresh.mode = viewUnified
+	fresh.width = 120
+	fresh.height = 16
+	fresh.setFile(file, rev)
+	fresh.cursorY = 18
+	fresh.scrollY = 9
+	fresh.highlight = highlight
+	want := fresh.renderUnifiedContent()
+
+	if got != want {
+		t.Fatal("cached unified render output differs from fresh render output for same state")
+	}
+}
+
+func BenchmarkRenderSideBySideContent(b *testing.B) {
+	dv := newDiffView()
+	dv.width = 120
+	dv.height = 28
+	dv.setFile(makeLargeFileDiff(400), review.New())
+	dv.highlight = func(filename, content string) string {
+		return fmt.Sprintf("\x1b[32m%s\x1b[0m", content)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dv.renderSideBySideContent()
+		dv.cursorY++
+		if dv.cursorY >= len(dv.rows) {
+			dv.cursorY = 0
+		}
+	}
+}
+
+func BenchmarkRenderUnifiedContent(b *testing.B) {
+	dv := newDiffView()
+	dv.mode = viewUnified
+	dv.width = 120
+	dv.height = 28
+	dv.setFile(makeLargeFileDiff(400), review.New())
+	dv.highlight = func(filename, content string) string {
+		return fmt.Sprintf("\x1b[32m%s\x1b[0m", content)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dv.renderUnifiedContent()
+		dv.cursorY++
+		if dv.cursorY >= len(dv.rows) {
+			dv.cursorY = 0
+		}
 	}
 }
 

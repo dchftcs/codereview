@@ -56,6 +56,10 @@ type diffView struct {
 	selectionActive bool
 	// Line number display mode
 	lineNums lineNumMode
+	// Per-file render caches to avoid recomputing expensive highlighting/wrapping
+	// on every cursor move redraw.
+	highlightCache map[string]string
+	wrapCache      map[string][]string
 }
 
 type diffRowKind int
@@ -110,7 +114,12 @@ func (dv *diffView) restoreState(fs fileState) {
 }
 
 func newDiffView() diffView {
-	return diffView{mode: viewSideBySide, lineNums: lineNumBoth}
+	return diffView{
+		mode:           viewSideBySide,
+		lineNums:       lineNumBoth,
+		highlightCache: make(map[string]string),
+		wrapCache:      make(map[string][]string),
+	}
 }
 
 // cycleLineNumMode cycles: both → relative only → absolute only → both.
@@ -161,6 +170,7 @@ func (dv *diffView) setFile(f *diff.FileDiff, rev *review.Review) {
 	dv.comments = rev
 	dv.scrollY = 0
 	dv.cursorY = 0
+	dv.resetRenderCaches()
 	dv.buildRows()
 }
 
@@ -179,6 +189,7 @@ func (dv *diffView) setFileKeepPosition(f *diff.FileDiff, rev *review.Review) {
 
 	dv.file = f
 	dv.comments = rev
+	dv.resetRenderCaches()
 	dv.buildRows()
 
 	// Find the same row identity in the new rows.
@@ -187,6 +198,38 @@ func (dv *diffView) setFileKeepPosition(f *diff.FileDiff, rev *review.Review) {
 	dv.cursorY = newCursor
 	dv.scrollY = newCursor - screenRow
 	dv.clampKeepPosition()
+}
+
+func (dv *diffView) resetRenderCaches() {
+	if len(dv.highlightCache) > 0 {
+		dv.highlightCache = make(map[string]string, len(dv.highlightCache))
+	}
+	if len(dv.wrapCache) > 0 {
+		dv.wrapCache = make(map[string][]string, len(dv.wrapCache))
+	}
+}
+
+func (dv *diffView) wrappedChunks(content string, width int) []string {
+	key := strconv.Itoa(width) + "\x00" + content
+	if cached, ok := dv.wrapCache[key]; ok {
+		return cached
+	}
+	chunks := wrapToWidth(content, width)
+	dv.wrapCache[key] = chunks
+	return chunks
+}
+
+func (dv *diffView) highlightChunk(filename, chunk string) string {
+	if dv.highlight == nil || filename == "" || chunk == "" {
+		return chunk
+	}
+	key := filename + "\x00" + chunk
+	if cached, ok := dv.highlightCache[key]; ok {
+		return cached
+	}
+	out := dv.highlight(filename, chunk)
+	dv.highlightCache[key] = out
+	return out
 }
 
 type diffRowAnchor struct {
@@ -826,7 +869,7 @@ func (dv *diffView) renderSideBySideContent() string {
 			rowLines = append(rowLines, "")
 		case rowHunkHeader:
 			contentW := dv.width - 4 - relGutter
-			for _, seg := range wrapToWidth(row.hunk, contentW) {
+			for _, seg := range dv.wrappedChunks(row.hunk, contentW) {
 				line := hunkHeaderStyle.Width(contentW).Render(seg)
 				if isCursor {
 					line = cursorStyle.Width(contentW).Render(seg)
@@ -937,14 +980,12 @@ func (dv *diffView) renderSideWrapped(line *diff.DiffLine, width int, isLeft boo
 	if textWidth < 1 {
 		textWidth = 1
 	}
-	chunks := wrapToWidth(content, textWidth)
+	chunks := dv.wrappedChunks(content, textWidth)
 
 	var out []string
 	for i, chunk := range chunks {
 		textChunk := chunk
-		if dv.highlight != nil && filename != "" {
-			textChunk = dv.highlight(filename, chunk)
-		}
+		textChunk = dv.highlightChunk(filename, chunk)
 
 		var combined string
 		if dv.showAbsolute() {
@@ -1018,7 +1059,7 @@ func (dv *diffView) renderUnifiedContent() string {
 			rowLines = append(rowLines, "")
 		case rowHunkHeader:
 			contentW := dv.width - 4 - relGutter
-			for _, seg := range wrapToWidth(row.hunk, contentW) {
+			for _, seg := range dv.wrappedChunks(row.hunk, contentW) {
 				line := hunkHeaderStyle.Width(contentW).Render(seg)
 				if isCursor {
 					line = cursorStyle.Width(contentW).Render(seg)
@@ -1107,7 +1148,7 @@ func (dv *diffView) renderUnifiedLineWrapped(line *diff.DiffLine, width int) []s
 	if textWidth < 1 {
 		textWidth = 1
 	}
-	chunks := wrapToWidth(content, textWidth)
+	chunks := dv.wrappedChunks(content, textWidth)
 	filename := ""
 	if dv.highlight != nil && dv.file != nil {
 		filename = dv.file.NewName
@@ -1119,9 +1160,7 @@ func (dv *diffView) renderUnifiedLineWrapped(line *diff.DiffLine, width int) []s
 	var out []string
 	for i, chunk := range chunks {
 		textChunk := chunk
-		if dv.highlight != nil && filename != "" {
-			textChunk = dv.highlight(filename, chunk)
-		}
+		textChunk = dv.highlightChunk(filename, chunk)
 		text := style.Render(prefix + textChunk)
 
 		var combined string

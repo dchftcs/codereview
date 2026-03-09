@@ -44,6 +44,8 @@ type diffView struct {
 	rowOrdinals []int
 	// Maps currently rendered screen lines to logical row indices.
 	visibleRowMap []int
+	// Maps currently rendered screen lines to comment rows (if any).
+	visibleCommentMap []*review.Comment
 	// Inline comment input
 	commentActive  bool
 	commentEditing bool
@@ -321,6 +323,7 @@ func (dv *diffView) buildRows() {
 	dv.rows = nil
 	dv.rowOrdinals = nil
 	dv.visibleRowMap = nil
+	dv.visibleCommentMap = nil
 	if dv.file == nil {
 		return
 	}
@@ -610,6 +613,13 @@ func (dv *diffView) clickAt(y int) {
 	}
 }
 
+func (dv *diffView) commentAtScreenY(y int) *review.Comment {
+	if y < 0 || y >= len(dv.visibleCommentMap) {
+		return nil
+	}
+	return dv.visibleCommentMap[y]
+}
+
 func (dv *diffView) clampScroll() {
 	if dv.scrollY < 0 {
 		dv.scrollY = 0
@@ -853,6 +863,7 @@ func (dv *diffView) renderSideBySideContent() string {
 
 	var lines []string
 	var rowMap []int
+	var commentMap []*review.Comment
 	viewportHeight := dv.contentViewportHeight()
 	for i := dv.scrollY; i < len(dv.rows) && len(lines) < viewportHeight; i++ {
 		row := dv.rows[i]
@@ -878,7 +889,16 @@ func (dv *diffView) renderSideBySideContent() string {
 			}
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
+			commentBoxW := dv.width - 6 - relGutter
+			if commentBoxW < 1 {
+				commentBoxW = 1
+			}
+			commentInnerW := commentBoxW - 4 // rounded border + horizontal padding
+			if commentInnerW < 1 {
+				commentInnerW = 1
+			}
+			commentText = strings.Join(wrapMultilineToWidth(commentText, commentInnerW), "\n")
+			commentLines := splitRenderedLines(commentBorderStyle.Width(commentBoxW).Render(commentText))
 			rowLines = append(rowLines, prefixBlankGutter(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
@@ -929,6 +949,11 @@ func (dv *diffView) renderSideBySideContent() string {
 			}
 			lines = append(lines, rl)
 			rowMap = append(rowMap, i)
+			if row.kind == rowComment {
+				commentMap = append(commentMap, row.comment)
+			} else {
+				commentMap = append(commentMap, nil)
+			}
 		}
 
 		if isCursor && dv.commentActive {
@@ -939,10 +964,12 @@ func (dv *diffView) renderSideBySideContent() string {
 				}
 				lines = append(lines, il)
 				rowMap = append(rowMap, i)
+				commentMap = append(commentMap, nil)
 			}
 		}
 	}
 	dv.visibleRowMap = rowMap
+	dv.visibleCommentMap = commentMap
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -1032,6 +1059,7 @@ func sideLineNum(line *diff.DiffLine, isLeft bool, chunkIdx int) string {
 func (dv *diffView) renderUnifiedContent() string {
 	var lines []string
 	var rowMap []int
+	var commentMap []*review.Comment
 	viewportHeight := dv.contentViewportHeight()
 
 	relGutter := 0
@@ -1068,7 +1096,16 @@ func (dv *diffView) renderUnifiedContent() string {
 			}
 		case rowComment:
 			commentText := formatCommentBubble(row.comment)
-			commentLines := splitRenderedLines(commentBorderStyle.Width(dv.width - 6 - relGutter).Render(commentText))
+			commentBoxW := dv.width - 6 - relGutter
+			if commentBoxW < 1 {
+				commentBoxW = 1
+			}
+			commentInnerW := commentBoxW - 4 // rounded border + horizontal padding
+			if commentInnerW < 1 {
+				commentInnerW = 1
+			}
+			commentText = strings.Join(wrapMultilineToWidth(commentText, commentInnerW), "\n")
+			commentLines := splitRenderedLines(commentBorderStyle.Width(commentBoxW).Render(commentText))
 			rowLines = append(rowLines, prefixBlankGutter(commentLines, relPrefix)...)
 		case rowDiffPair:
 			pair := row.pair
@@ -1112,6 +1149,11 @@ func (dv *diffView) renderUnifiedContent() string {
 			}
 			lines = append(lines, rl)
 			rowMap = append(rowMap, i)
+			if row.kind == rowComment {
+				commentMap = append(commentMap, row.comment)
+			} else {
+				commentMap = append(commentMap, nil)
+			}
 		}
 
 		if isCursor && dv.commentActive {
@@ -1122,10 +1164,12 @@ func (dv *diffView) renderUnifiedContent() string {
 				}
 				lines = append(lines, il)
 				rowMap = append(rowMap, i)
+				commentMap = append(commentMap, nil)
 			}
 		}
 	}
 	dv.visibleRowMap = rowMap
+	dv.visibleCommentMap = commentMap
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -1354,6 +1398,21 @@ func wrapToWidth(s string, maxWidth int) []string {
 		}
 		out = append(out, string(runes[start:end]))
 		start = end
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func wrapMultilineToWidth(s string, maxWidth int) []string {
+	src := strings.Split(s, "\n")
+	if len(src) == 0 {
+		return []string{""}
+	}
+	out := make([]string, 0, len(src))
+	for _, line := range src {
+		out = append(out, wrapToWidth(line, maxWidth)...)
 	}
 	if len(out) == 0 {
 		return []string{""}

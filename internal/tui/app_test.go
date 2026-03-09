@@ -445,6 +445,82 @@ func TestDoubleClickGeneralPanelOpensEditor(t *testing.T) {
 	}
 }
 
+func TestDoubleClickInlineCommentRowOpensEditor(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m = pressKey(m, keyRunes("j"))
+	m = pressKey(m, keyRunes("c"))
+	m = typeText(m, "inline note 1")
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = typeText(m, "inline note 2")
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = typeText(m, "inline note 3")
+	longComment := "inline note 1\ninline note 2\ninline note 3"
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	_ = m.diffView.renderSideBySideContent() // populate visible maps on live model
+	commentDiffY := -1
+	seen := 0
+	for y, c := range m.diffView.visibleCommentMap {
+		if c != nil {
+			seen++
+			if seen == 2 {
+				commentDiffY = y // second visible line inside comment box
+				break
+			}
+		}
+	}
+	if commentDiffY < 0 {
+		t.Fatal("expected multi-line rendered comment box to click inside")
+	}
+
+	baseTime := time.Unix(2, 0)
+	tick := 0
+	m.now = func() time.Time {
+		tick++
+		return baseTime.Add(time.Duration(tick*100) * time.Millisecond)
+	}
+
+	headerH := lipgloss.Height(m.renderHeader())
+	mouseY := headerH + commentDiffY + 2
+	mouseX := m.fileListWidth + 6
+
+	next, cmd := m.Update(tea.MouseMsg{
+		X:      mouseX,
+		Y:      mouseY,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("unexpected command on first click")
+	}
+	if m.mode != modeNormal {
+		t.Fatalf("mode after first comment click = %v, want %v", m.mode, modeNormal)
+	}
+
+	next, cmd = m.Update(tea.MouseMsg{
+		X:      mouseX,
+		Y:      mouseY,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+	if m.mode != modeComment {
+		t.Fatalf("mode after second comment click = %v, want %v", m.mode, modeComment)
+	}
+	if !m.diffView.commentEditing {
+		t.Fatal("expected comment editing mode after double click")
+	}
+	if cmd == nil {
+		t.Fatal("expected focus command on inline comment double click")
+	}
+	if got := m.diffView.commentValue(); got != longComment {
+		t.Fatalf("comment input prefill = %q, want %q", got, longComment)
+	}
+}
+
 func TestGeneralCommentSearchAndDeleteEditFlows(t *testing.T) {
 	t.Parallel()
 

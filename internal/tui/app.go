@@ -147,6 +147,11 @@ type Model struct {
 		at     time.Time
 		panelY int
 	}
+	// Double-click tracking for diff comment rows.
+	lastDiffClick struct {
+		at  time.Time
+		key string
+	}
 	now func() time.Time
 }
 
@@ -1003,12 +1008,35 @@ func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
 		// Diff panel: content starts 1 line below border top (path line)
 		diffY := bodyY - 1 // subtract path line
 		if diffY >= 0 {
+			// Refresh visible row/comment maps on the live model before hit-testing.
+			if m.diffView.mode == viewUnified {
+				_ = m.diffView.renderUnifiedContent()
+			} else {
+				_ = m.diffView.renderSideBySideContent()
+			}
+
 			row := m.diffView.scrollY + diffY
 			if row >= 0 && row < len(m.diffView.rows) {
 				m.mouseDrag.active = true
 				m.mouseDrag.startRow = row
 			}
+			clickedComment := m.diffView.commentAtScreenY(diffY)
 			m.diffView.clickAt(diffY)
+			now := m.now()
+			if c := clickedComment; c != nil &&
+				!m.lastDiffClick.at.IsZero() &&
+				now.Sub(m.lastDiffClick.at) <= mouseDoubleClickThreshold &&
+				m.lastDiffClick.key == inlineCommentKey(c) {
+				m.lastDiffClick.at = time.Time{}
+				m.lastDiffClick.key = ""
+				return m.openInlineCommentEditor(c)
+			}
+			m.lastDiffClick.at = now
+			if clickedComment != nil {
+				m.lastDiffClick.key = inlineCommentKey(clickedComment)
+			} else {
+				m.lastDiffClick.key = ""
+			}
 		}
 		return m, nil
 	}
@@ -1052,6 +1080,26 @@ func (m Model) openGeneralCommentEditor() (tea.Model, tea.Cmd) {
 		m.generalInput = m.newGeneralTextarea("")
 	}
 	return m, m.generalInput.Focus()
+}
+
+func inlineCommentKey(c *review.Comment) string {
+	if c == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%d", c.File, c.Line, c.EndLine)
+}
+
+func (m Model) openInlineCommentEditor(c *review.Comment) (tea.Model, tea.Cmd) {
+	if c == nil {
+		return m, nil
+	}
+	m.mode = modeComment
+	if c.EndLine > 0 {
+		m.diffView.activateEditRangeComment(c.File, c.Line, c.EndLine, c.Text)
+	} else {
+		m.diffView.activateEditComment(c.File, c.Line, c.Text)
+	}
+	return m, m.diffView.commentInput.Focus()
 }
 
 func (m Model) handleGeneralPanelFocusKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {

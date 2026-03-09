@@ -111,6 +111,15 @@ func Show(commit string) (string, error) {
 	return run("show", "--format=", commit)
 }
 
+// IsRevision reports whether ref resolves to a commit.
+func IsRevision(ref string) bool {
+	if strings.TrimSpace(ref) == "" {
+		return false
+	}
+	_, err := run("rev-parse", "--verify", ref+"^{commit}")
+	return err == nil
+}
+
 // CurrentBranch returns the current branch name.
 func CurrentBranch() (string, error) {
 	out, err := run("rev-parse", "--abbrev-ref", "HEAD")

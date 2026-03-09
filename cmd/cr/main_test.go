@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -59,7 +60,6 @@ func TestParseArgsErrors(t *testing.T) {
 		{name: "missing theme", args: []string{"cr", "--theme"}, wantErr: "missing value for --theme"},
 		{name: "invalid theme", args: []string{"cr", "--theme", "solarized"}, wantErr: `invalid theme "solarized"`},
 		{name: "branch and unstaged", args: []string{"cr", "--branch", "--unstaged"}, wantErr: "--unstaged cannot be combined with --branch"},
-		{name: "rev and unstaged", args: []string{"cr", "HEAD~1", "--unstaged"}, wantErr: "--unstaged cannot be combined with a revision argument"},
 		{name: "unknown flag", args: []string{"cr", "--wat"}, wantErr: "unknown flag: --wat"},
 	}
 
@@ -74,6 +74,59 @@ func TestParseArgsErrors(t *testing.T) {
 				t.Fatalf("error = %q, want contains %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestResolveMainArgumentRevision(t *testing.T) {
+	got, err := resolveMainArgument("HEAD~1", func(string) bool { return true }, func(string) bool { return false }, strings.NewReader(""), &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveMainArgument error: %v", err)
+	}
+	if got.RevSpec != "HEAD~1" || got.PathFilter != "" {
+		t.Fatalf("unexpected resolve result: %+v", got)
+	}
+}
+
+func TestResolveMainArgumentPathPrefix(t *testing.T) {
+	got, err := resolveMainArgument("internal/tui", func(string) bool { return false }, func(string) bool { return true }, strings.NewReader(""), &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveMainArgument error: %v", err)
+	}
+	if got.PathFilter != "internal/tui" || got.RevSpec != "" {
+		t.Fatalf("unexpected resolve result: %+v", got)
+	}
+}
+
+func TestResolveMainArgumentGlob(t *testing.T) {
+	got, err := resolveMainArgument("internal/**/*.go", func(string) bool { return false }, func(string) bool { return false }, strings.NewReader(""), &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveMainArgument error: %v", err)
+	}
+	if got.PathFilter != "internal/**/*.go" || got.RevSpec != "" {
+		t.Fatalf("unexpected resolve result: %+v", got)
+	}
+}
+
+func TestResolveMainArgumentAmbiguousPromptsUser(t *testing.T) {
+	var out bytes.Buffer
+	got, err := resolveMainArgument("feature/x", func(string) bool { return true }, func(string) bool { return true }, strings.NewReader("y\n"), &out)
+	if err != nil {
+		t.Fatalf("resolveMainArgument error: %v", err)
+	}
+	if got.PathFilter != "feature/x" || got.RevSpec != "" {
+		t.Fatalf("expected path choice, got %+v", got)
+	}
+	if !strings.Contains(out.String(), "matches both") {
+		t.Fatalf("expected ambiguity prompt, got %q", out.String())
+	}
+
+	out.Reset()
+	got, err = resolveMainArgument("feature/x", func(string) bool { return true }, func(string) bool { return true }, strings.NewReader("n\n"), &out)
+	if err != nil {
+		t.Fatalf("resolveMainArgument error: %v", err)
+	}
+	if got.RevSpec != "feature/x" || got.PathFilter != "" {
+		t.Fatalf("expected revision choice, got %+v", got)
 	}
 }
 

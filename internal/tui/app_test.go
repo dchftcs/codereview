@@ -287,6 +287,52 @@ func TestCtrlFScrollPersistsAfterViewLayoutClamp(t *testing.T) {
 	}
 }
 
+func TestApplyDiffLoadedPathPrefixFilter(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(Config{PathFilter: "internal/tui"})
+	m.width = 120
+	m.height = 30
+
+	m.applyDiffLoaded(diffLoadedMsg{
+		files: []diff.FileDiff{
+			{OldName: "a.go", NewName: "a.go"},
+			{OldName: "internal/tui/app.go", NewName: "internal/tui/app.go"},
+			{OldName: "internal/git/git.go", NewName: "internal/git/git.go"},
+		},
+	})
+
+	if got := len(m.fileList.files); got != 1 {
+		t.Fatalf("filtered file count = %d, want 1", got)
+	}
+	if got := m.fileList.selectedDiffPath(); got != "internal/tui/app.go" {
+		t.Fatalf("selected path = %q, want internal/tui/app.go", got)
+	}
+}
+
+func TestApplyDiffLoadedGlobFilter(t *testing.T) {
+	t.Parallel()
+
+	m := NewModel(Config{PathFilter: "internal/tui/*.go"})
+	m.width = 120
+	m.height = 30
+
+	m.applyDiffLoaded(diffLoadedMsg{
+		files: []diff.FileDiff{
+			{OldName: "README.md", NewName: "README.md"},
+			{OldName: "internal/tui/app.go", NewName: "internal/tui/app.go"},
+			{OldName: "cmd/cr/main.go", NewName: "cmd/cr/main.go"},
+		},
+	})
+
+	if got := len(m.fileList.files); got != 1 {
+		t.Fatalf("filtered file count = %d, want 1", got)
+	}
+	if got := m.fileList.selectedDiffPath(); got != "internal/tui/app.go" {
+		t.Fatalf("selected path = %q, want internal/tui/app.go", got)
+	}
+}
+
 func TestMouseWheelScrollsDiffViewport(t *testing.T) {
 	t.Parallel()
 

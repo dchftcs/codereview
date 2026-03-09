@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -15,9 +19,22 @@ import (
 
 func main() {
 	noArgs := len(os.Args) == 1
-	revSpec, outputFile, branchMode, unstagedMode, theme, err := parseArgs()
+	targetArg, outputFile, branchMode, unstagedMode, theme, err := parseArgs()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		printUsage()
+		os.Exit(2)
+	}
+	resolved, err := resolveMainArgument(targetArg, gitpkg.IsRevision, pathExists, os.Stdin, os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		printUsage()
+		os.Exit(2)
+	}
+	revSpec := resolved.RevSpec
+	pathFilter := resolved.PathFilter
+	if unstagedMode && revSpec != "" {
+		fmt.Fprintf(os.Stderr, "Error: --unstaged cannot be combined with a revision argument\n\n")
 		printUsage()
 		os.Exit(2)
 	}
@@ -41,6 +58,7 @@ func main() {
 		OutputFile:   outputFile,
 		PromptSaveAs: noArgs,
 		Highlight:    highlight.Line,
+		PathFilter:   pathFilter,
 		Theme:        theme,
 	}
 
@@ -123,10 +141,104 @@ func parseArgs() (revSpec, outputFile string, branchMode, unstagedMode bool, the
 	if unstagedMode && branchMode {
 		return "", "", false, false, "", fmt.Errorf("--unstaged cannot be combined with --branch")
 	}
-	if unstagedMode && revSpec != "" {
-		return "", "", false, false, "", fmt.Errorf("--unstaged cannot be combined with a revision argument")
-	}
 	return
+}
+
+type resolvedArg struct {
+	RevSpec    string
+	PathFilter string
+}
+
+func resolveMainArgument(arg string, isRevision func(string) bool, pathExists func(string) bool, in io.Reader, out io.Writer) (resolvedArg, error) {
+	arg = strings.TrimSpace(arg)
+	if arg == "" || arg == "." || arg == "./" {
+		return resolvedArg{}, nil
+	}
+
+	normalizedPath := normalizePathArg(arg)
+	pathLike := looksLikePathArg(arg) || pathExists(arg)
+	if hasGlobPattern(arg) {
+		pathLike = true
+	}
+	revOK := false
+	if !hasGlobPattern(arg) {
+		revOK = isRevision(arg)
+	}
+
+	if revOK && pathLike {
+		asPath, err := promptArgumentDisambiguation(arg, in, out)
+		if err != nil {
+			return resolvedArg{}, err
+		}
+		if asPath {
+			return resolvedArg{PathFilter: normalizedPath}, nil
+		}
+		return resolvedArg{RevSpec: arg}, nil
+	}
+	if pathLike {
+		return resolvedArg{PathFilter: normalizedPath}, nil
+	}
+	if revOK {
+		return resolvedArg{RevSpec: arg}, nil
+	}
+	return resolvedArg{RevSpec: arg}, nil
+}
+
+func promptArgumentDisambiguation(arg string, in io.Reader, out io.Writer) (bool, error) {
+	r := bufio.NewReader(in)
+	for {
+		if _, err := fmt.Fprintf(out, "Argument %q matches both a git revision and a path. Use as path filter? [y/N]: ", arg); err != nil {
+			return false, err
+		}
+		line, err := r.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return false, err
+		}
+		choice := strings.ToLower(strings.TrimSpace(line))
+		if choice == "y" || choice == "yes" {
+			return true, nil
+		}
+		if choice == "" || choice == "n" || choice == "no" {
+			return false, nil
+		}
+		if err == io.EOF {
+			return false, nil
+		}
+	}
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func looksLikePathArg(arg string) bool {
+	if arg == "" {
+		return false
+	}
+	if strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../") || strings.HasPrefix(arg, "/") {
+		return true
+	}
+	if strings.Contains(arg, "/") || strings.Contains(arg, `\`) {
+		return true
+	}
+	return hasGlobPattern(arg)
+}
+
+func hasGlobPattern(arg string) bool {
+	return strings.ContainsAny(arg, "*?[")
+}
+
+func normalizePathArg(arg string) string {
+	p := filepath.ToSlash(strings.TrimSpace(arg))
+	for strings.HasPrefix(p, "./") {
+		p = strings.TrimPrefix(p, "./")
+	}
+	p = path.Clean(p)
+	if p == "." {
+		return ""
+	}
+	return p
 }
 
 func parseThemeValue(val string) (tui.ThemeName, error) {
@@ -166,6 +278,8 @@ func printUsage() {
 
 Usage:
   cr                          Review current branch vs main/master + staged/unstaged/untracked (auto-detect)
+  cr internal/tui             Review only files under this relative path prefix
+  cr 'internal/tui/*.go'      Review files matching glob (basic glob support)
   cr --branch, -b             Explicitly diff current branch against main/master
   cr --unstaged, -u           Review only unstaged tracked changes + untracked files
   cr HEAD~1                   Review last commit

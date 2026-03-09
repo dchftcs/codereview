@@ -18,6 +18,8 @@ go build -o cr ./cmd/cr/
 
 ```bash
 cr                              # Review current branch vs main/master (auto-detect)
+cr internal/tui                 # Review only files under a relative path prefix
+cr 'internal/tui/*.go'          # Review files matching a basic glob pattern
 cr -b, --branch                 # Explicitly diff current branch against main/master
 cr -u, --unstaged               # Review only unstaged tracked changes + untracked files
 cr HEAD~1                       # Review the last commit
@@ -30,6 +32,7 @@ cr -o review.md                 # Save review output to a file
 When run with no arguments on a feature branch, `cr` automatically diffs against `main` (or `master`), showing branch changes from the merge base plus staged/unstaged/untracked working-tree changes.
 In the file list, untracked files are marked with `??`.
 `--unstaged` shows only unstaged tracked changes (working tree vs index) plus untracked files.
+If an argument could be interpreted as either a git revision and a path, `cr` prompts you to choose.
 
 ## Keys
 

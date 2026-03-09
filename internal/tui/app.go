@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -80,6 +81,7 @@ func (defaultGitService) UntrackedFiles() ([]string, error) {
 // Config holds TUI startup configuration.
 type Config struct {
 	RevSpec      string
+	PathFilter   string
 	UnstagedOnly bool
 	OutputFile   string
 	PromptSaveAs bool
@@ -495,6 +497,7 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 			}
 		}
 	}
+	msg.files = filterDiffFiles(msg.files, m.config.PathFilter)
 	m.fileList = newFileList(msg.files)
 	m.fileList.review = m.review
 	m.commits = msg.commits
@@ -507,6 +510,7 @@ func (m *Model) applyCommitLoaded(msg commitLoadedMsg) {
 		m.err = msg.err
 		return
 	}
+	msg.files = filterDiffFiles(msg.files, m.config.PathFilter)
 	m.fileList = newFileList(msg.files)
 	m.fileList.review = m.review
 	m.expandedSet = make(map[int]bool)
@@ -522,8 +526,50 @@ func (m *Model) applyExpandLoaded(msg expandLoadedMsg) {
 		m.err = msg.err
 		return
 	}
-	m.expandedFiles = msg.files
+	m.expandedFiles = filterDiffFiles(msg.files, m.config.PathFilter)
 	m.setDiffViewForSelection(true)
+}
+
+func filterDiffFiles(files []diff.FileDiff, pathFilter string) []diff.FileDiff {
+	filter := normalizeFilter(pathFilter)
+	if filter == "" {
+		return files
+	}
+	out := make([]diff.FileDiff, 0, len(files))
+	for i := range files {
+		p := files[i].NewName
+		if p == "/dev/null" {
+			p = files[i].OldName
+		}
+		p = normalizeFilter(p)
+		if matchesPathFilter(p, filter) {
+			out = append(out, files[i])
+		}
+	}
+	return out
+}
+
+func matchesPathFilter(filePath, filter string) bool {
+	if filePath == "" || filter == "" {
+		return false
+	}
+	if strings.ContainsAny(filter, "*?[") {
+		ok, err := path.Match(filter, filePath)
+		return err == nil && ok
+	}
+	return filePath == filter || strings.HasPrefix(filePath, filter+"/")
+}
+
+func normalizeFilter(v string) string {
+	v = filepath.ToSlash(strings.TrimSpace(v))
+	for strings.HasPrefix(v, "./") {
+		v = strings.TrimPrefix(v, "./")
+	}
+	clean := path.Clean(v)
+	if clean == "." {
+		return ""
+	}
+	return clean
 }
 
 func (m *Model) currentStateKey() string {

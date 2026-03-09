@@ -41,8 +41,8 @@ In the file list, untracked files are marked with `??`.
 | `H` / `L` | Move cursor to top / bottom visible line (screen-relative) |
 | `gg` / `G` | Go to top / bottom |
 | `[count]gg` / `[count]G` | Go to line number |
-| `PgDn` / `PgUp` / `Ctrl+f` / `Ctrl+b` | Page down/up by one visible viewport height |
-| `Ctrl+d` / `Ctrl+u` | Half page down/up |
+| `PgDn` / `PgUp` | Page down/up by one visible viewport height (cursor-anchored) |
+| `Ctrl+f` / `Ctrl+b` | Scroll window down/up by one visible viewport height |
 | `/` | Search in diff |
 | `n` / `N` | Next / previous search match |
 | `]` / `[` | Next / previous file (includes read files; state preserved) |
@@ -64,7 +64,7 @@ In the file list, untracked files are marked with `??`.
 | `?` | Show help screen |
 | `q` / `Ctrl+c` | Quit (prompts if review has unsaved comments) |
 
-Use `H`/`L` when you want screen-relative jumps (top/bottom visible row) to quickly start scrolling from the current viewport edge. `PgDn`/`PgUp` move by exactly one visible viewport height. `gg`/`G` remain full-diff jumps (first/last row).
+Use `H`/`L` when you want screen-relative jumps (top/bottom visible row) to quickly start scrolling from the current viewport edge. `PgDn`/`PgUp` move by exactly one visible viewport height with cursor anchoring. `Ctrl+f`/`Ctrl+b` perform viewport/window scrolling by one page. `gg`/`G` remain full-diff jumps (first/last row).
 Long lines are soft-wrapped in the diff view (not truncated).
 
 ## Navigation Guarantees

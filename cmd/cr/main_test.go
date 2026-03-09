@@ -21,6 +21,7 @@ func TestParseArgsSuccessPaths(t *testing.T) {
 		wantTheme    tui.ThemeName
 	}{
 		{name: "no args", args: []string{"cr"}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
+		{name: "dot path means current repo", args: []string{"cr", "."}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
 		{name: "positional rev", args: []string{"cr", "HEAD~1"}, wantRev: "HEAD~1", wantOutput: "", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
 		{name: "short output", args: []string{"cr", "-o", "review.md"}, wantRev: "", wantOutput: "review.md", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
 		{name: "long output", args: []string{"cr", "--output", "out.md"}, wantRev: "", wantOutput: "out.md", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},

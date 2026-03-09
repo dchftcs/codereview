@@ -354,6 +354,109 @@ func (dv *diffView) moveCursor(n int) {
 	dv.scrollCursorIntoMargin()
 }
 
+// scrollByRows scrolls the viewport by row count while keeping the cursor
+// anchored to the same on-screen row where possible.
+func (dv *diffView) scrollByRows(n int) {
+	if len(dv.rows) == 0 || n == 0 {
+		return
+	}
+
+	screenRow := dv.cursorY - dv.scrollY
+	maxScroll := len(dv.rows) - 1
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+
+	dv.scrollY += n
+	if dv.scrollY < 0 {
+		dv.scrollY = 0
+	}
+	if dv.scrollY > maxScroll {
+		dv.scrollY = maxScroll
+	}
+
+	maxCursor := len(dv.rows) - 1
+	if maxCursor < 0 {
+		maxCursor = 0
+	}
+	dv.cursorY = dv.scrollY + screenRow
+	if dv.cursorY < 0 {
+		dv.cursorY = 0
+	}
+	if dv.cursorY > maxCursor {
+		dv.cursorY = maxCursor
+	}
+
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
+		return
+	}
+	if dv.cursorY < dv.scrollY {
+		dv.cursorY = dv.scrollY
+	}
+	maxVisible := dv.scrollY + viewportHeight - 1
+	if dv.cursorY > maxVisible {
+		dv.cursorY = maxVisible
+	}
+}
+
+// windowScrollByRows scrolls the viewport by row count without anchoring
+// movement to the cursor position.
+func (dv *diffView) windowScrollByRows(n int) {
+	if len(dv.rows) == 0 || n == 0 {
+		return
+	}
+	dv.scrollY += n
+	if dv.scrollY < 0 {
+		dv.scrollY = 0
+	}
+	maxScroll := len(dv.rows) - 1
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if dv.scrollY > maxScroll {
+		dv.scrollY = maxScroll
+	}
+
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
+		return
+	}
+
+	margin := scrollMarginLines
+	maxMargin := (viewportHeight - 1) / 2
+	if margin > maxMargin {
+		margin = maxMargin
+	}
+	if margin < 0 {
+		margin = 0
+	}
+
+	topBoundary := dv.scrollY + margin
+	bottomBoundary := dv.scrollY + viewportHeight - margin - 1
+	if bottomBoundary < topBoundary {
+		topBoundary = dv.scrollY
+		bottomBoundary = dv.scrollY + viewportHeight - 1
+	}
+
+	if dv.cursorY < topBoundary {
+		dv.cursorY = topBoundary
+	}
+	if dv.cursorY > bottomBoundary {
+		dv.cursorY = bottomBoundary
+	}
+	if dv.cursorY < 0 {
+		dv.cursorY = 0
+	}
+	maxCursor := len(dv.rows) - 1
+	if maxCursor < 0 {
+		maxCursor = 0
+	}
+	if dv.cursorY > maxCursor {
+		dv.cursorY = maxCursor
+	}
+}
+
 // moveCursorTo sets the cursor to an absolute row index.
 func (dv *diffView) moveCursorTo(row int) {
 	if len(dv.rows) == 0 {

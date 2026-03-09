@@ -113,6 +113,10 @@ func parseArgs() (revSpec, outputFile string, branchMode, unstagedMode bool, the
 			if strings.HasPrefix(arg, "-") {
 				return "", "", false, false, "", fmt.Errorf("unknown flag: %s", arg)
 			}
+			// Treat current-directory pathspec aliases like no positional revision.
+			if arg == "." || arg == "./" {
+				continue
+			}
 			revSpec = arg
 		}
 	}
@@ -188,7 +192,6 @@ Keys:
   E              Edit comment at cursor
   e              Toggle full file context
   Tab            Toggle side-by-side vs unified diff
-  Ctrl+d/u       Half page down/up
   s              Save & output review
   q              Quit`)
 }

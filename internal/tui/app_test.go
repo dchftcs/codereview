@@ -232,13 +232,116 @@ func TestViewportRelativeNavigationKeys(t *testing.T) {
 
 	m.diffView.cursorY = 20
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.diffView.cursorY != 20+viewport {
-		t.Fatalf("cursor after PgDn = %d, want %d", m.diffView.cursorY, 20+viewport)
+	if m.diffView.scrollY != 20+viewport {
+		t.Fatalf("scroll after PgDn = %d, want %d", m.diffView.scrollY, 20+viewport)
 	}
 
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyPgUp})
-	if m.diffView.cursorY != 20 {
-		t.Fatalf("cursor after PgUp = %d, want 20", m.diffView.cursorY)
+	if m.diffView.scrollY != 20 {
+		t.Fatalf("scroll after PgUp = %d, want 20", m.diffView.scrollY)
+	}
+}
+
+func TestCtrlFBCtrlBUseWindowScrollWithoutCursorAnchoring(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.height = 12
+	m.diffView.setFile(makeLargeFileDiff(120), m.review)
+	m.diffView.scrollY = 20
+	m.diffView.cursorY = 25
+	viewport := m.diffView.contentViewportHeight()
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	if m.diffView.scrollY != 20+viewport {
+		t.Fatalf("scroll after Ctrl+f = %d, want %d", m.diffView.scrollY, 20+viewport)
+	}
+	if m.diffView.cursorY < m.diffView.scrollY || m.diffView.cursorY >= m.diffView.scrollY+viewport {
+		t.Fatalf("cursor after Ctrl+f = %d, expected within visible viewport [%d,%d)", m.diffView.cursorY, m.diffView.scrollY, m.diffView.scrollY+viewport)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
+	if m.diffView.scrollY != 20 {
+		t.Fatalf("scroll after Ctrl+b = %d, want 20", m.diffView.scrollY)
+	}
+	if m.diffView.cursorY < m.diffView.scrollY || m.diffView.cursorY >= m.diffView.scrollY+viewport {
+		t.Fatalf("cursor after Ctrl+b = %d, expected within visible viewport [%d,%d)", m.diffView.cursorY, m.diffView.scrollY, m.diffView.scrollY+viewport)
+	}
+}
+
+func TestCtrlFScrollPersistsAfterViewLayoutClamp(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.height = 12
+	m.diffView.setFile(makeLargeFileDiff(120), m.review)
+	m.diffView.scrollY = 20
+	m.diffView.cursorY = 25
+	viewport := m.diffView.contentViewportHeight()
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	_ = m.View() // triggers layout/clamp path
+
+	if m.diffView.scrollY != 20+viewport {
+		t.Fatalf("scroll after Ctrl+f + View = %d, want %d", m.diffView.scrollY, 20+viewport)
+	}
+}
+
+func TestMouseWheelScrollsDiffViewport(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.height = 12
+	m.diffView.setFile(makeLargeFileDiff(120), m.review)
+	m.diffView.scrollY = 10
+	m.diffView.cursorY = 13
+
+	headerH := lipgloss.Height(m.renderHeader())
+	mouseY := headerH + 2
+	mouseX := m.fileListWidth + 8
+
+	next, _ := m.Update(tea.MouseMsg{
+		X:      mouseX,
+		Y:      mouseY,
+		Button: tea.MouseButtonWheelDown,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+
+	if m.diffView.scrollY != 13 {
+		t.Fatalf("scrollY after wheel down = %d, want 13", m.diffView.scrollY)
+	}
+	if m.diffView.cursorY != 16 {
+		t.Fatalf("cursorY after wheel down = %d, want 16", m.diffView.cursorY)
+	}
+}
+
+func TestMouseWheelScrollsGeneralPanelWhenHovered(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.review.GeneralComments = []string{strings.Repeat("line\n", 12)}
+	m.review.GeneralComments[0] += "line"
+	m.generalPanel.review = m.review
+	m.updateLayout()
+
+	headerH := lipgloss.Height(m.renderHeader())
+	bodyHeight := m.diffView.height + 2
+	mouseY := headerH + bodyHeight + 1
+
+	next, _ := m.Update(tea.MouseMsg{
+		X:      4,
+		Y:      mouseY,
+		Button: tea.MouseButtonWheelDown,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+
+	if m.focus != focusGeneralPanel {
+		t.Fatalf("focus after wheel on general panel = %v, want %v", m.focus, focusGeneralPanel)
+	}
+	if m.generalPanel.scrollY == 0 {
+		t.Fatal("general panel did not scroll on wheel input")
 	}
 }
 

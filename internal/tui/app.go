@@ -407,6 +407,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeContextMenu {
 			return m.updateContextMenuMouse(msg)
 		}
+		if msg.Action == tea.MouseActionPress {
+			switch msg.Button {
+			case tea.MouseButtonWheelDown:
+				return m.handleMouseWheel(msg.X, msg.Y, 3)
+			case tea.MouseButtonWheelUp:
+				return m.handleMouseWheel(msg.X, msg.Y, -3)
+			}
+		}
 		if msg.Button == tea.MouseButtonLeft {
 			if msg.Action == tea.MouseActionPress {
 				// Click cancels any existing visual selection
@@ -681,14 +689,14 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.moveCursorToViewportTop()
 	case key.Matches(msg, keys.ScreenBottom):
 		m.diffView.moveCursorToViewportBottom()
-	case key.Matches(msg, keys.FullPageDown):
-		m.diffView.moveCursor(count * m.diffView.contentViewportHeight())
-	case key.Matches(msg, keys.FullPageUp):
-		m.diffView.moveCursor(-count * m.diffView.contentViewportHeight())
-	case key.Matches(msg, keys.HalfPageDown):
-		m.diffView.moveCursor(count * m.diffView.height / 2)
-	case key.Matches(msg, keys.HalfPageUp):
-		m.diffView.moveCursor(-count * m.diffView.height / 2)
+	case key.Matches(msg, keys.PageDown):
+		m.diffView.scrollByRows(count * m.diffView.contentViewportHeight())
+	case key.Matches(msg, keys.PageUp):
+		m.diffView.scrollByRows(-count * m.diffView.contentViewportHeight())
+	case isWindowPageDownKey(msg):
+		m.diffView.windowScrollByRows(count * m.diffView.contentViewportHeight())
+	case isWindowPageUpKey(msg):
+		m.diffView.windowScrollByRows(-count * m.diffView.contentViewportHeight())
 
 	case key.Matches(msg, keys.NextFile):
 		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
@@ -1025,6 +1033,41 @@ func (m Model) handleGeneralPanelFocusKey(msg tea.KeyMsg) (Model, tea.Cmd, bool)
 	return m, nil, false
 }
 
+func (m Model) handleMouseWheel(x, y, delta int) (tea.Model, tea.Cmd) {
+	if delta == 0 {
+		return m, nil
+	}
+
+	headerH := lipgloss.Height(m.renderHeader())
+	yRel := y - headerH
+	if yRel < 0 {
+		return m, nil
+	}
+
+	bodyHeight := m.diffView.height + 2
+	if yRel < bodyHeight {
+		// Only scroll when pointer is over diff panel, not file list.
+		if x > m.fileListWidth+1 {
+			m.focus = focusDiff
+			m.generalPanel.focused = false
+			m.diffView.scrollByRows(delta)
+		}
+		return m, nil
+	}
+
+	yRel -= bodyHeight
+	if m.generalPanelVisible() {
+		panelHeight := m.generalPanel.height + 2
+		if yRel < panelHeight {
+			m.focus = focusGeneralPanel
+			m.generalPanel.focused = true
+			m.generalPanel.moveSelection(delta)
+			m.updateLayout()
+		}
+	}
+	return m, nil
+}
+
 func (m *Model) syncGeneralPanelAfterSubmit() {
 	m.generalPanel.scrollY = 0
 	m.generalPanel.clampScroll()
@@ -1150,14 +1193,14 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.moveCursorToViewportTop()
 	case key.Matches(msg, keys.ScreenBottom):
 		m.diffView.moveCursorToViewportBottom()
-	case key.Matches(msg, keys.FullPageDown):
-		m.diffView.moveCursor(count * m.diffView.contentViewportHeight())
-	case key.Matches(msg, keys.FullPageUp):
-		m.diffView.moveCursor(-count * m.diffView.contentViewportHeight())
-	case key.Matches(msg, keys.HalfPageDown):
-		m.diffView.moveCursor(count * m.diffView.height / 2)
-	case key.Matches(msg, keys.HalfPageUp):
-		m.diffView.moveCursor(-count * m.diffView.height / 2)
+	case key.Matches(msg, keys.PageDown):
+		m.diffView.scrollByRows(count * m.diffView.contentViewportHeight())
+	case key.Matches(msg, keys.PageUp):
+		m.diffView.scrollByRows(-count * m.diffView.contentViewportHeight())
+	case isWindowPageDownKey(msg):
+		m.diffView.windowScrollByRows(count * m.diffView.contentViewportHeight())
+	case isWindowPageUpKey(msg):
+		m.diffView.windowScrollByRows(-count * m.diffView.contentViewportHeight())
 
 	case key.Matches(msg, keys.Comment):
 		file, ok := m.currentReviewFileName()
@@ -1506,6 +1549,14 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func isWindowPageDownKey(msg tea.KeyMsg) bool {
+	return key.Matches(msg, keys.WindowPageDown) || msg.Type == tea.KeyCtrlF
+}
+
+func isWindowPageUpKey(msg tea.KeyMsg) bool {
+	return key.Matches(msg, keys.WindowPageUp) || msg.Type == tea.KeyCtrlB
+}
+
 func (m Model) helpView() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
@@ -1519,8 +1570,8 @@ func (m Model) helpView() string {
 		{"H / L", "Top / bottom visible line"},
 		{"gg / G", "Go to top / bottom"},
 		{"[count]gg / [count]G", "Go to line"},
-		{"PgDn / PgUp / Ctrl+f / Ctrl+b", "Page down/up (viewport height)"},
-		{"Ctrl+d / Ctrl+u", "Half page down/up"},
+		{"PgDn / PgUp", "Page down/up (cursor-anchored)"},
+		{"Ctrl+f / Ctrl+b", "Window scroll page down/up"},
 		{"/", "Search in diff"},
 		{"f", "Find file by name/path"},
 		{"p", "Find file by content"},
@@ -1705,7 +1756,7 @@ func (m Model) renderFooter() string {
 		commentParts = append(commentParts, fmt.Sprintf("%d general", gc))
 	}
 	commentCount := strings.Join(commentParts, ", ")
-	footerHints := fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `/`search `n/N`next/prev `V`visual `c`comment `R`general `^r`focus panel `tab`%s `e`expand `s`save `q`quit `?`help",
+	footerHints := fmt.Sprintf(" `j/k`move `H/L`screen-top/bot `gg/G`top/bot `PgDn/Up`page `^f/^b`scroll `/`search `n/N`next/prev `V`visual `c`comment `R`general `^r`focus panel `tab`%s `e`expand `s`save `q`quit `?`help",
 		modeStr)
 	if m.mode == modeVisual {
 		footerHints = " -- VISUAL -- j/k move  c comment on selection  Esc cancel"

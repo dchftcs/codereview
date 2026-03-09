@@ -23,10 +23,10 @@ type keyMap struct {
 	DeleteComment     key.Binding
 	EditComment       key.Binding
 	GeneralComment    key.Binding
-	FullPageDown      key.Binding
-	FullPageUp        key.Binding
-	HalfPageDown      key.Binding
-	HalfPageUp        key.Binding
+	PageDown          key.Binding
+	PageUp            key.Binding
+	WindowPageDown    key.Binding
+	WindowPageUp      key.Binding
 	Help              key.Binding
 	Search            key.Binding
 	SearchNext        key.Binding
@@ -69,10 +69,10 @@ var keys = keyMap{
 	DeleteComment:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete comment")),
 	EditComment:       key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit comment")),
 	GeneralComment:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "edit general comment")),
-	FullPageDown:      key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn/up", "page down/up")),
-	FullPageUp:        key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("", "")),
-	HalfPageDown:      key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
-	HalfPageUp:        key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
+	PageDown:          key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn/up", "page down/up")),
+	PageUp:            key.NewBinding(key.WithKeys("pgup"), key.WithHelp("", "")),
+	WindowPageDown:    key.NewBinding(key.WithKeys("ctrl+f"), key.WithHelp("^f/^b", "scroll page")),
+	WindowPageUp:      key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("", "")),
 	Help:              key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Search:            key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 	SearchNext:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),

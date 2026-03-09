@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -388,6 +389,59 @@ func TestMouseWheelScrollsGeneralPanelWhenHovered(t *testing.T) {
 	}
 	if m.generalPanel.scrollY == 0 {
 		t.Fatal("general panel did not scroll on wheel input")
+	}
+}
+
+func TestDoubleClickGeneralPanelOpensEditor(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.review.AddGeneralComment("existing general")
+	m.generalPanel.review = m.review
+	m.updateLayout()
+
+	baseTime := time.Unix(1, 0)
+	tick := 0
+	m.now = func() time.Time {
+		tick++
+		// Keep clicks within double-click threshold.
+		return baseTime.Add(time.Duration(tick*100) * time.Millisecond)
+	}
+
+	headerH := lipgloss.Height(m.renderHeader())
+	bodyHeight := m.diffView.height + 2
+	mouseY := headerH + bodyHeight + 1
+
+	next, cmd := m.Update(tea.MouseMsg{
+		X:      4,
+		Y:      mouseY,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+	if cmd != nil {
+		// Focus command is expected only on the second click.
+		t.Fatal("unexpected command on first click")
+	}
+	if m.mode != modeNormal {
+		t.Fatalf("mode after first click = %v, want %v", m.mode, modeNormal)
+	}
+
+	next, cmd = m.Update(tea.MouseMsg{
+		X:      4,
+		Y:      mouseY,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+	if m.mode != modeGeneralComment {
+		t.Fatalf("mode after second click = %v, want %v", m.mode, modeGeneralComment)
+	}
+	if cmd == nil {
+		t.Fatal("expected focus command on double click")
+	}
+	if got := m.generalInput.Value(); got != "existing general" {
+		t.Fatalf("general input prefill = %q, want %q", got, "existing general")
 	}
 }
 

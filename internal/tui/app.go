@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -99,6 +100,7 @@ type SaveMsg struct {
 const minContentHeight = scrollMarginLines*2 + 1
 const defaultReviewOutputFile = "REVIEW.md"
 const generalCommentInputContentHeight = 7
+const mouseDoubleClickThreshold = 350 * time.Millisecond
 
 type Model struct {
 	config         Config
@@ -140,6 +142,12 @@ type Model struct {
 		active   bool
 		startRow int // diff row where the press began
 	}
+	// Double-click tracking for the general panel.
+	lastGeneralClick struct {
+		at     time.Time
+		panelY int
+	}
+	now func() time.Time
 }
 
 func NewModel(cfg Config) Model {
@@ -163,6 +171,7 @@ func NewModel(cfg Config) Model {
 		expandedSet:    make(map[int]bool),
 		fileStates:     make(map[string]fileState),
 		referenceFiles: make(map[string]*diff.FileDiff),
+		now:            time.Now,
 	}
 	applyDiffContext(m.review, cfg.RevSpec, cfg.UnstagedOnly)
 	m.generalPanel.review = m.review
@@ -863,15 +872,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, keys.GeneralComment):
-		m.mode = modeGeneralComment
-		if m.review.GeneralComment() != "" {
-			m.generalEditIdx = 0
-			m.generalInput = m.newGeneralTextarea(m.review.GeneralComment())
-		} else {
-			m.generalEditIdx = -1
-			m.generalInput = m.newGeneralTextarea("")
-		}
-		return m, m.generalInput.Focus()
+		return m.openGeneralCommentEditor()
 
 	case key.Matches(msg, keys.DeleteComment):
 		file, ok := m.currentReviewFileName()
@@ -1022,6 +1023,15 @@ func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
 			panelY := yRel - 1
 			if panelY >= 0 && panelY < m.generalPanel.height {
 				m.generalPanel.clickAt(panelY)
+				now := m.now()
+				if !m.lastGeneralClick.at.IsZero() &&
+					now.Sub(m.lastGeneralClick.at) <= mouseDoubleClickThreshold &&
+					m.lastGeneralClick.panelY == panelY {
+					m.lastGeneralClick.at = time.Time{}
+					return m.openGeneralCommentEditor()
+				}
+				m.lastGeneralClick.at = now
+				m.lastGeneralClick.panelY = panelY
 			}
 			m.updateLayout()
 			return m, nil
@@ -1030,6 +1040,18 @@ func (m Model) handleMouseClick(x, y int) (tea.Model, tea.Cmd) {
 
 	m.mouseDrag.active = false
 	return m, nil
+}
+
+func (m Model) openGeneralCommentEditor() (tea.Model, tea.Cmd) {
+	m.mode = modeGeneralComment
+	if m.review.GeneralComment() != "" {
+		m.generalEditIdx = 0
+		m.generalInput = m.newGeneralTextarea(m.review.GeneralComment())
+	} else {
+		m.generalEditIdx = -1
+		m.generalInput = m.newGeneralTextarea("")
+	}
+	return m, m.generalInput.Focus()
 }
 
 func (m Model) handleGeneralPanelFocusKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
@@ -1059,22 +1081,13 @@ func (m Model) handleGeneralPanelFocusKey(msg tea.KeyMsg) (Model, tea.Cmd, bool)
 		return m, nil, true
 	case key.Matches(msg, keys.EditComment):
 		if total > 0 {
-			m.mode = modeGeneralComment
-			m.generalEditIdx = 0
-			m.generalInput = m.newGeneralTextarea(m.review.GeneralComment())
-			return m, m.generalInput.Focus(), true
+			updated, cmd := m.openGeneralCommentEditor()
+			return updated.(Model), cmd, true
 		}
 		return m, nil, true
 	case key.Matches(msg, keys.GeneralComment):
-		m.mode = modeGeneralComment
-		if m.review.GeneralComment() != "" {
-			m.generalEditIdx = 0
-			m.generalInput = m.newGeneralTextarea(m.review.GeneralComment())
-		} else {
-			m.generalEditIdx = -1
-			m.generalInput = m.newGeneralTextarea("")
-		}
-		return m, m.generalInput.Focus(), true
+		updated, cmd := m.openGeneralCommentEditor()
+		return updated.(Model), cmd, true
 	}
 	return m, nil, false
 }

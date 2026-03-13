@@ -180,6 +180,7 @@ type Model struct {
 	statusEpoch        int
 	statusAppliedEpoch int
 	statusPollInFlight bool
+	gitOpInFlight      bool // true while a stage toggle or diff reload goroutine is running
 	lastUserAction     time.Time
 	now                func() time.Time
 }
@@ -447,7 +448,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case pollTickMsg:
-		if !m.canToggleStage() || m.statusPollInFlight || m.now().Sub(m.lastUserAction) < activeStatusPollDebounce {
+		if !m.canToggleStage() || m.statusPollInFlight || m.gitOpInFlight || m.now().Sub(m.lastUserAction) < activeStatusPollDebounce {
 			return m, scheduleStatusPoll()
 		}
 		m.statusPollInFlight = true
@@ -455,6 +456,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(scheduleStatusPoll(), m.pollStatus(epoch))
 
 	case diffLoadedMsg:
+		m.gitOpInFlight = false
 		m.applyDiffLoaded(msg)
 		return m, nil
 
@@ -468,11 +470,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stageToggledMsg:
 		if msg.err != nil {
+			m.gitOpInFlight = false
 			m.err = msg.err
 			return m, nil
 		}
 		m.applyOptimisticStageToggle(msg.path, msg.staged)
 		m.statusMsg = msg.action
+		// gitOpInFlight stays true — cleared when diffLoadedMsg arrives
 		return m, m.loadDiffWithSelection(msg.preserveSelection)
 
 	case statusPolledMsg:
@@ -485,6 +489,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if shouldReloadForStatusTransition(prevSnapshot, msg.snapshot, m.config) {
+			m.gitOpInFlight = true
 			return m, m.loadDiffWithSelection(m.fileList.selectedDiffPath())
 		}
 		m.applySnapshotToVisibleFiles()
@@ -1252,6 +1257,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok || idx < 0 || idx >= len(m.fileList.files) {
 			break
 		}
+		m.gitOpInFlight = true
 		return m, m.toggleStageForPath(path, m.fileList.files[idx].Staged)
 
 	case key.Matches(msg, keys.Save):

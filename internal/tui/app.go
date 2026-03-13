@@ -961,10 +961,11 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pendingG {
 		m.pendingG = false
 		if k == "g" {
+			hasCount := m.countBuf != ""
 			count := m.consumeCount()
-			if count > 1 {
-				// [count]gg = go to row [count]-1
-				m.diffView.moveCursorTo(count - 1)
+			if hasCount {
+				// [count]gg = go to source line number
+				m.diffView.moveCursorToLineNum(count)
 			} else {
 				m.diffView.moveCursorTo(0)
 			}
@@ -990,11 +991,12 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	hasCount := m.countBuf != ""
 	count := m.consumeCount()
 	if k == "G" {
-		if count > 1 {
-			// [count]G = go to row [count]-1
-			m.diffView.moveCursorTo(count - 1)
+		if hasCount {
+			// [count]G = go to source line number
+			m.diffView.moveCursorToLineNum(count)
 		} else {
 			// G = go to last row
 			m.diffView.moveCursorTo(len(m.diffView.rows) - 1)
@@ -1532,9 +1534,10 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pendingG {
 		m.pendingG = false
 		if k == "g" {
+			hasCount := m.countBuf != ""
 			count := m.consumeCount()
-			if count > 1 {
-				m.diffView.moveCursorTo(count - 1)
+			if hasCount {
+				m.diffView.moveCursorToLineNum(count)
 			} else {
 				m.diffView.moveCursorTo(0)
 			}
@@ -1558,10 +1561,11 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	hasCount := m.countBuf != ""
 	count := m.consumeCount()
 	if k == "G" {
-		if count > 1 {
-			m.diffView.moveCursorTo(count - 1)
+		if hasCount {
+			m.diffView.moveCursorToLineNum(count)
 		} else {
 			m.diffView.moveCursorTo(len(m.diffView.rows) - 1)
 		}

@@ -739,6 +739,35 @@ func (dv *diffView) currentLineNum() int {
 	return dv.rows[dv.cursorY].lineNum
 }
 
+// moveCursorToLineNum jumps to the first visible row associated with the given
+// source line number. If that exact line is not visible in the current diff, it
+// falls forward to the next visible source line; if none exists, it falls back
+// to the last visible source line row.
+func (dv *diffView) moveCursorToLineNum(lineNum int) {
+	if len(dv.rows) == 0 {
+		return
+	}
+	if lineNum < 1 {
+		lineNum = 1
+	}
+
+	lastLineRow := -1
+	for i, row := range dv.rows {
+		if row.lineNum == 0 {
+			continue
+		}
+		lastLineRow = i
+		if row.lineNum >= lineNum {
+			dv.moveCursorTo(i)
+			return
+		}
+	}
+
+	if lastLineRow >= 0 {
+		dv.moveCursorTo(lastLineRow)
+	}
+}
+
 func (dv *diffView) toggleMode() {
 	if dv.mode == viewSideBySide {
 		dv.mode = viewUnified

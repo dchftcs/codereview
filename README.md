@@ -43,7 +43,7 @@ If an argument could be interpreted as either a git revision and a path, `cr` pr
 | `[count]j` / `[count]k` | Move by count (e.g. `9j`) |
 | `H` / `L` | Move cursor to top / bottom visible line (screen-relative) |
 | `gg` / `G` | Go to top / bottom |
-| `[count]gg` / `[count]G` | Go to line number |
+| `[count]gg` / `[count]G` | Go to source line number |
 | `PgDn` / `PgUp` | Page down/up by one visible viewport height (cursor-anchored) |
 | `Ctrl+f` / `Ctrl+b` | Scroll window down/up by one visible viewport height |
 | `/` | Search in diff |

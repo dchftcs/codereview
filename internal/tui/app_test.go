@@ -54,8 +54,21 @@ func TestUpdateNavigationChangesCursorAndFileSelection(t *testing.T) {
 
 	m = pressKey(m, keyRunes("2"))
 	m = pressKey(m, keyRunes("G"))
-	if m.diffView.cursorY != 1 {
-		t.Fatalf("cursor after 2G = %d, want 1", m.diffView.cursorY)
+	if got := m.diffView.currentLineNum(); got != 2 {
+		t.Fatalf("line after 2G = %d, want 2", got)
+	}
+
+	m = pressKey(m, keyRunes("1"))
+	m = pressKey(m, keyRunes("G"))
+	if got := m.diffView.currentLineNum(); got != 1 {
+		t.Fatalf("line after 1G = %d, want 1", got)
+	}
+
+	m = pressKey(m, keyRunes("3"))
+	m = pressKey(m, keyRunes("g"))
+	m = pressKey(m, keyRunes("g"))
+	if got := m.diffView.currentLineNum(); got != 3 {
+		t.Fatalf("line after 3gg = %d, want 3", got)
 	}
 }
 

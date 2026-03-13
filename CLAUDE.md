@@ -33,7 +33,7 @@ internal/
   tui/app.go                Root Bubble Tea model, message routing, async diff loading
   tui/contextmenu.go        Shift+click context menu: rendering, overlay, action dispatch
   tui/diffview.go           Side-by-side and unified diff rendering, cursor, scrolling, inline comment input
-  tui/filelist.go           File list sidebar with change indicators and comment counts
+  tui/filelist.go           File list sidebar with change indicators, staged markers, and comment counts
   tui/bottombar.go          Reusable bottom-bar text input (used for general comments)
   tui/keys.go               Key bindings
   tui/styles.go             Lipgloss color/style definitions (Dracula-based palette)
@@ -44,6 +44,7 @@ internal/
 
 - **Bubble Tea (Elm Architecture)**: Model/Update/View. All state lives in `Model`. Messages are the only way to trigger state changes.
 - **Async git operations**: `loadDiff()` and `navigateCommit()` return `tea.Cmd` so git subprocesses don't block the UI.
+- **Working-tree stage toggle**: `a` stages or unstages the selected modified file using `git add -- <path>` / `git restore --staged -- <path>`, then reloads the diff while preserving the file selection.
 - **Chroma for highlighting**: Pure Go, no external deps. Lexer is cached per file extension. Highlighting happens per-line at render time.
 - **Row-based rendering**: Diff lines, hunk headers, and comments are flattened into a `[]diffRow` slice. Cursor and scroll operate on row indices. This simplifies scrolling, cursor positioning, and comment insertion.
 - **Dual jump semantics**: `gg`/`G` (plus `[count]gg`/`[count]G`) are absolute-row jumps for Vim parity. `H`/`L` are viewport-relative jumps (top/bottom visible line) for scroll priming from the current screen. `PgDn`/`PgUp` page by one visible viewport height.
@@ -75,6 +76,7 @@ internal/
 - Inline comment input lives in `diffView` (not the bottom bar). General comment input uses a dedicated `generalInput textarea.Model` rendered in the general panel area. The bottom bar (`bottomBarInput`) is only for single-line prompts (search, save-as, etc.).
 - `GeneralComments` is serialized as `[]string`, but the app treats it as a single free-form text block (`GeneralComment()` helper). Formatter emits it as plain text under `## General Comments`.
 - Arrow keys `←`/`→` are bound to unread-only file navigation (`PrevUnreadFile`/`NextUnreadFile`), while `[`/`]` include read files. Commit navigation uses only `h`/`l`.
+- `a` toggles staging only in working-tree style reviews (`revSpec == ""`, `--unstaged`, or `...HEAD`); commit/range views should treat it as unavailable.
 - The inline comment `commentInput` is a `textarea.Model`, not a `textinput.Model`. Submit is `ctrl+s`, bound as `keys.SubmitComment`, not `Enter` (`keys.Submit`).
 - General comment input (`modeGeneralComment`) uses `generalInput textarea.Model` on `Model`, not the bottom bar.
 - The context menu uses Shift+left-click, not right-click. Right-click is intercepted by most terminal emulators (paste menu), so `MouseMsg` with `Button == MouseButtonRight` is unreliable. `MouseMsg.Shift` on a left-click is reliably passed through via SGR mouse encoding.

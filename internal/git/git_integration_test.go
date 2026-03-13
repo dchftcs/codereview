@@ -196,6 +196,31 @@ func TestLogParsesCountAndFormat(t *testing.T) {
 	}
 }
 
+func TestParsePorcelainStatus(t *testing.T) {
+	t.Parallel()
+
+	out := strings.Join([]string{
+		"M  staged.txt",
+		" M unstaged.txt",
+		"R  old.txt -> new.txt",
+		"?? untracked.txt",
+	}, "\n")
+
+	got := parsePorcelainStatus(out)
+	if len(got) != 4 {
+		t.Fatalf("len(parsePorcelainStatus) = %d, want 4", len(got))
+	}
+	if got[0].Path != "staged.txt" || got[0].Index != 'M' || got[0].Worktree != ' ' {
+		t.Fatalf("unexpected staged entry: %+v", got[0])
+	}
+	if got[2].Path != "new.txt" || got[2].Original != "old.txt" || got[2].RenamedTo != "new.txt" {
+		t.Fatalf("unexpected rename entry: %+v", got[2])
+	}
+	if got[3].Path != "untracked.txt" || got[3].Index != '?' || got[3].Worktree != '?' {
+		t.Fatalf("unexpected untracked entry: %+v", got[3])
+	}
+}
+
 func ensureGitAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

@@ -46,6 +46,7 @@ type keyMap struct {
 	ViewGeneral       key.Binding
 	VisualMode        key.Binding
 	ToggleRead        key.Binding
+	ToggleStage       key.Binding
 }
 
 var keys = keyMap{
@@ -92,4 +93,5 @@ var keys = keyMap{
 	ViewGeneral:       key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "focus general panel")),
 	VisualMode:        key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "visual select")),
 	ToggleRead:        key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark read/unread")),
+	ToggleStage:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "stage/unstage")),
 }

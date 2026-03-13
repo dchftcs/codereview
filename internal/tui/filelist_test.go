@@ -246,6 +246,20 @@ func TestMarkedReadFileNameRemainsStableInView(t *testing.T) {
 	}
 }
 
+func TestStagedFileShowsMarkerInView(t *testing.T) {
+	t.Parallel()
+
+	fl := newFileList([]diff.FileDiff{
+		{NewName: "alpha.go", Staged: true},
+	})
+	fl.height = 4
+
+	rendered := stripAnsi(fl.view(40))
+	if !strings.Contains(rendered, " ^") {
+		t.Fatalf("rendered file list missing staged marker: %q", rendered)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

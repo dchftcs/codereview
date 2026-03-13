@@ -51,6 +51,7 @@ If an argument could be interpreted as either a git revision and a path, `cr` pr
 | `]` / `[` | Next / previous file (includes read files; state preserved) |
 | `←` / `→` | Previous / next unread file |
 | `m` | Mark selected file read/unread |
+| `a` | Toggle stage / unstage for the selected modified file |
 | `Shift+click` (file list) | Open context menu to toggle read/unread |
 | `h` / `l` | Previous / next commit |
 | `c` | Add inline comment at cursor line |
@@ -66,6 +67,8 @@ If an argument could be interpreted as either a git revision and a path, `cr` pr
 | `s` | Save review and exit (prompts for filename in default no-arg flow) |
 | `?` | Show help screen |
 | `q` / `Ctrl+c` | Quit (prompts if review has unsaved comments) |
+
+In the file list, `^` marks a file that currently has staged changes in the index.
 
 Use `H`/`L` when you want screen-relative jumps (top/bottom visible row) to quickly start scrolling from the current viewport edge. `PgDn`/`PgUp` move by exactly one visible viewport height with cursor anchoring. `Ctrl+f`/`Ctrl+b` perform viewport/window scrolling by one page. `gg`/`G` remain full-diff jumps (first/last row).
 Long lines are soft-wrapped in the diff view (not truncated).

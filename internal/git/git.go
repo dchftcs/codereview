@@ -11,6 +11,14 @@ type CommitInfo struct {
 	Subject string
 }
 
+type FileStatus struct {
+	Path      string
+	Index     byte
+	Worktree  byte
+	Original  string
+	RenamedTo string
+}
+
 // Log returns recent commits as a list.
 func Log(n int) ([]CommitInfo, error) {
 	out, err := run("log", "--oneline", fmt.Sprintf("-n%d", n), "--no-decorate")
@@ -165,6 +173,52 @@ func UntrackedFiles() ([]string, error) {
 		files = append(files, l)
 	}
 	return files, nil
+}
+
+// Status returns git porcelain status entries keyed to working-tree paths.
+func Status() ([]FileStatus, error) {
+	out, err := run("status", "--porcelain=v1")
+	if err != nil {
+		return nil, err
+	}
+	return parsePorcelainStatus(out), nil
+}
+
+// Stage stages the provided path in the index.
+func Stage(path string) error {
+	_, err := run("add", "--", path)
+	return err
+}
+
+// Unstage removes the provided path from the index while leaving the working tree intact.
+func Unstage(path string) error {
+	_, err := run("restore", "--staged", "--", path)
+	return err
+}
+
+func parsePorcelainStatus(out string) []FileStatus {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	statuses := make([]FileStatus, 0, len(lines))
+	for _, line := range lines {
+		if len(line) < 3 || strings.TrimSpace(line) == "" {
+			continue
+		}
+		entry := FileStatus{
+			Index:    line[0],
+			Worktree: line[1],
+		}
+		pathPart := line[3:]
+		if strings.Contains(pathPart, " -> ") {
+			parts := strings.SplitN(pathPart, " -> ", 2)
+			entry.Original = parts[0]
+			entry.Path = parts[1]
+			entry.RenamedTo = parts[1]
+		} else {
+			entry.Path = pathPart
+		}
+		statuses = append(statuses, entry)
+	}
+	return statuses
 }
 
 func appendUntrackedDiff(base string, fullContext bool) (string, error) {

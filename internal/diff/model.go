@@ -38,4 +38,5 @@ type FileDiff struct {
 	Hunks     []Hunk
 	Binary    bool
 	Untracked bool
+	Staged    bool
 }

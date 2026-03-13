@@ -50,6 +50,9 @@ type GitService interface {
 	DiffUnstaged() (string, error)
 	DiffUnstagedFull() (string, error)
 	Log(n int) ([]gitpkg.CommitInfo, error)
+	Status() ([]gitpkg.FileStatus, error)
+	Stage(path string) error
+	Unstage(path string) error
 	UntrackedFiles() ([]string, error)
 }
 
@@ -73,6 +76,18 @@ func (defaultGitService) DiffUnstagedFull() (string, error) {
 
 func (defaultGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
 	return gitpkg.Log(n)
+}
+
+func (defaultGitService) Status() ([]gitpkg.FileStatus, error) {
+	return gitpkg.Status()
+}
+
+func (defaultGitService) Stage(path string) error {
+	return gitpkg.Stage(path)
+}
+
+func (defaultGitService) Unstage(path string) error {
+	return gitpkg.Unstage(path)
 }
 
 func (defaultGitService) UntrackedFiles() ([]string, error) {
@@ -101,6 +116,15 @@ const minContentHeight = scrollMarginLines*2 + 1
 const defaultReviewOutputFile = "REVIEW.md"
 const generalCommentInputContentHeight = 7
 const mouseDoubleClickThreshold = 350 * time.Millisecond
+const idleStatusPollInterval = 300 * time.Millisecond
+const activeStatusPollDebounce = 1 * time.Second
+
+type statusSnapshotEntry struct {
+	Index     byte
+	Worktree  byte
+	Staged    bool
+	Untracked bool
+}
 
 type Model struct {
 	config         Config
@@ -152,7 +176,12 @@ type Model struct {
 		at  time.Time
 		key string
 	}
-	now func() time.Time
+	statusSnapshot     map[string]statusSnapshotEntry
+	statusEpoch        int
+	statusAppliedEpoch int
+	statusPollInFlight bool
+	lastUserAction     time.Time
+	now                func() time.Time
 }
 
 func NewModel(cfg Config) Model {
@@ -176,6 +205,8 @@ func NewModel(cfg Config) Model {
 		expandedSet:    make(map[int]bool),
 		fileStates:     make(map[string]fileState),
 		referenceFiles: make(map[string]*diff.FileDiff),
+		statusSnapshot: make(map[string]statusSnapshotEntry),
+		statusEpoch:    1,
 		now:            time.Now,
 	}
 	applyDiffContext(m.review, cfg.RevSpec, cfg.UnstagedOnly)
@@ -233,17 +264,29 @@ func applyDiffContext(rev *review.Review, revSpec string, unstagedOnly bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.loadDiff()
+	return tea.Batch(m.loadDiffForStatusEpoch("", m.statusEpoch), scheduleStatusPoll())
 }
 
 type diffLoadedMsg struct {
-	files     []diff.FileDiff
-	commits   []gitpkg.CommitInfo
-	untracked []string
-	err       error
+	files             []diff.FileDiff
+	commits           []gitpkg.CommitInfo
+	untracked         []string
+	statuses          []gitpkg.FileStatus
+	preserveSelection string
+	statusEpoch       int
+	err               error
 }
 
-func (m Model) loadDiff() tea.Cmd {
+func (m *Model) loadDiff() tea.Cmd {
+	return m.loadDiffWithSelection("")
+}
+
+func (m *Model) loadDiffWithSelection(preserveSelection string) tea.Cmd {
+	epoch := m.nextStatusEpoch()
+	return m.loadDiffForStatusEpoch(preserveSelection, epoch)
+}
+
+func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			rawDiff string
@@ -264,10 +307,64 @@ func (m Model) loadDiff() tea.Cmd {
 		}
 
 		commits, _ := m.git.Log(50)
+		statuses, _ := m.git.Status()
 		untracked, _ := m.git.UntrackedFiles()
 
-		return diffLoadedMsg{files: files, commits: commits, untracked: untracked}
+		return diffLoadedMsg{
+			files:             files,
+			commits:           commits,
+			untracked:         untracked,
+			statuses:          statuses,
+			preserveSelection: preserveSelection,
+			statusEpoch:       statusEpoch,
+		}
 	}
+}
+
+type stageToggledMsg struct {
+	action            string
+	path              string
+	staged            bool
+	preserveSelection string
+	err               error
+}
+
+type pollTickMsg struct{}
+
+type statusPolledMsg struct {
+	snapshot map[string]statusSnapshotEntry
+	epoch    int
+	err      error
+}
+
+func scheduleStatusPoll() tea.Cmd {
+	return tea.Tick(idleStatusPollInterval, func(time.Time) tea.Msg {
+		return pollTickMsg{}
+	})
+}
+
+func snapshotFromGitStatuses(statuses []gitpkg.FileStatus) map[string]statusSnapshotEntry {
+	snapshot := make(map[string]statusSnapshotEntry, len(statuses))
+	for _, st := range statuses {
+		path := filepath.ToSlash(st.Path)
+		snapshot[path] = statusSnapshotEntry{
+			Index:     st.Index,
+			Worktree:  st.Worktree,
+			Staged:    st.Index != ' ' && st.Index != '?',
+			Untracked: st.Index == '?' && st.Worktree == '?',
+		}
+	}
+	return snapshot
+}
+
+func shouldIncludeInCurrentReview(snapshot statusSnapshotEntry, cfg Config) bool {
+	if cfg.UnstagedOnly {
+		return snapshot.Untracked || (snapshot.Worktree != ' ' && snapshot.Worktree != 0)
+	}
+	if cfg.RevSpec == "" || strings.HasSuffix(cfg.RevSpec, "...HEAD") {
+		return snapshot.Untracked || snapshot.Index != ' ' || snapshot.Worktree != ' '
+	}
+	return false
 }
 
 type expandLoadedMsg struct {
@@ -349,6 +446,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateLayout()
 		return m, nil
 
+	case pollTickMsg:
+		if !m.canToggleStage() || m.statusPollInFlight || m.now().Sub(m.lastUserAction) < activeStatusPollDebounce {
+			return m, scheduleStatusPoll()
+		}
+		m.statusPollInFlight = true
+		epoch := m.nextStatusEpoch()
+		return m, tea.Batch(scheduleStatusPoll(), m.pollStatus(epoch))
+
 	case diffLoadedMsg:
 		m.applyDiffLoaded(msg)
 		return m, nil
@@ -359,6 +464,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case expandLoadedMsg:
 		m.applyExpandLoaded(msg)
+		return m, nil
+
+	case stageToggledMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.applyOptimisticStageToggle(msg.path, msg.staged)
+		m.statusMsg = msg.action
+		return m, m.loadDiffWithSelection(msg.preserveSelection)
+
+	case statusPolledMsg:
+		m.statusPollInFlight = false
+		if msg.err != nil {
+			return m, nil
+		}
+		prevSnapshot := m.statusSnapshot
+		if !m.applyStatusSnapshot(msg.snapshot, msg.epoch) {
+			return m, nil
+		}
+		if shouldReloadForStatusTransition(prevSnapshot, msg.snapshot, m.config) {
+			return m, m.loadDiffWithSelection(m.fileList.selectedDiffPath())
+		}
+		m.applySnapshotToVisibleFiles()
 		return m, nil
 
 	case generalEditorFinishedMsg:
@@ -420,6 +549,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		m.lastUserAction = m.now()
 		if m.mode == modeContextMenu {
 			return m.updateContextMenuMouse(msg)
 		}
@@ -455,6 +585,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		m.lastUserAction = m.now()
 		if m.mode == modeContextMenu {
 			return m.updateContextMenu(msg)
 		}
@@ -496,6 +627,9 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 		m.err = msg.err
 		return
 	}
+	if snapshot := snapshotFromGitStatuses(msg.statuses); len(snapshot) > 0 {
+		m.applyStatusSnapshot(snapshot, msg.statusEpoch)
+	}
 	if len(msg.untracked) > 0 {
 		untrackedSet := make(map[string]struct{}, len(msg.untracked))
 		for _, p := range msg.untracked {
@@ -511,9 +645,28 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 			}
 		}
 	}
+	if len(m.statusSnapshot) > 0 {
+		applySnapshotToFiles(msg.files, m.statusSnapshot)
+	}
 	msg.files = filterDiffFiles(msg.files, m.config.PathFilter)
+	prevMode := m.fileList.mode
+	prevReadSet := m.fileList.readSet
+	prevRoot := m.fileList.root
 	m.fileList = newFileList(msg.files)
 	m.fileList.review = m.review
+	if prevReadSet != nil {
+		m.fileList.readSet = prevReadSet
+	}
+	if prevRoot != nil {
+		m.fileList.root = prevRoot
+	}
+	if prevMode == fileListModeFullTree {
+		m.fileList.mode = fileListModeFullTree
+		m.fileList.rebuildTreeRows()
+	}
+	if msg.preserveSelection != "" {
+		_ = m.fileList.focusPath(msg.preserveSelection)
+	}
 	m.commits = msg.commits
 	m.updateLayout()
 	m.setDiffViewForSelection(false)
@@ -542,6 +695,92 @@ func (m *Model) applyExpandLoaded(msg expandLoadedMsg) {
 	}
 	m.expandedFiles = filterDiffFiles(msg.files, m.config.PathFilter)
 	m.setDiffViewForSelection(true)
+}
+
+func (m *Model) nextStatusEpoch() int {
+	m.statusEpoch++
+	return m.statusEpoch
+}
+
+func (m Model) pollStatus(epoch int) tea.Cmd {
+	return func() tea.Msg {
+		statuses, err := m.git.Status()
+		if err != nil {
+			return statusPolledMsg{epoch: epoch, err: err}
+		}
+		return statusPolledMsg{
+			snapshot: snapshotFromGitStatuses(statuses),
+			epoch:    epoch,
+		}
+	}
+}
+
+func (m *Model) applyStatusSnapshot(snapshot map[string]statusSnapshotEntry, epoch int) bool {
+	if epoch < m.statusAppliedEpoch {
+		return false
+	}
+	m.statusSnapshot = snapshot
+	m.statusAppliedEpoch = epoch
+	return true
+}
+
+func shouldReloadForStatusTransition(prev, next map[string]statusSnapshotEntry, cfg Config) bool {
+	if !(cfg.UnstagedOnly || cfg.RevSpec == "" || strings.HasSuffix(cfg.RevSpec, "...HEAD")) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(prev)+len(next))
+	for path, oldEntry := range prev {
+		seen[path] = struct{}{}
+		if shouldIncludeInCurrentReview(oldEntry, cfg) != shouldIncludeInCurrentReview(next[path], cfg) {
+			return true
+		}
+	}
+	for path, cur := range next {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		if shouldIncludeInCurrentReview(cur, cfg) {
+			return true
+		}
+	}
+	return false
+}
+
+func applySnapshotToFiles(files []diff.FileDiff, snapshot map[string]statusSnapshotEntry) {
+	for i := range files {
+		name := files[i].NewName
+		if name == "/dev/null" {
+			name = files[i].OldName
+		}
+		entry, ok := snapshot[filepath.ToSlash(name)]
+		files[i].Staged = ok && entry.Staged
+		files[i].Untracked = ok && entry.Untracked
+	}
+}
+
+func (m *Model) applySnapshotToVisibleFiles() {
+	applySnapshotToFiles(m.fileList.files, m.statusSnapshot)
+	if m.expandedFiles != nil {
+		applySnapshotToFiles(m.expandedFiles, m.statusSnapshot)
+	}
+}
+
+func (m *Model) applyOptimisticStageToggle(path string, staged bool) {
+	if m.statusSnapshot == nil {
+		m.statusSnapshot = make(map[string]statusSnapshotEntry)
+	}
+	path = filepath.ToSlash(path)
+	entry := m.statusSnapshot[path]
+	entry.Staged = staged
+	if staged {
+		if entry.Index == 0 || entry.Index == ' ' {
+			entry.Index = 'M'
+		}
+	} else {
+		entry.Index = ' '
+	}
+	m.statusSnapshot[path] = entry
+	m.applySnapshotToVisibleFiles()
 }
 
 func filterDiffFiles(files []diff.FileDiff, pathFilter string) []diff.FileDiff {
@@ -674,6 +913,38 @@ func (m *Model) referenceFileDiff(path string) (*diff.FileDiff, error) {
 func (m *Model) currentReviewFileName() (string, bool) {
 	path, _, ok := m.fileList.modifiedSelection()
 	return path, ok
+}
+
+func (m *Model) canToggleStage() bool {
+	if m.config.UnstagedOnly {
+		return true
+	}
+	if m.config.RevSpec == "" {
+		return true
+	}
+	return strings.HasSuffix(m.config.RevSpec, "...HEAD")
+}
+
+func (m Model) toggleStageForPath(path string, staged bool) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		action := "Staged " + path
+		nextStaged := true
+		if staged {
+			action = "Unstaged " + path
+			nextStaged = false
+			err = m.git.Unstage(path)
+		} else {
+			err = m.git.Stage(path)
+		}
+		return stageToggledMsg{
+			action:            action,
+			path:              path,
+			staged:            nextStaged,
+			preserveSelection: path,
+			err:               err,
+		}
+	}
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -969,6 +1240,17 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "Marked unread"
 		}
+
+	case key.Matches(msg, keys.ToggleStage):
+		if !m.canToggleStage() {
+			m.statusMsg = "Stage toggle unavailable for commit diffs"
+			break
+		}
+		path, idx, ok := m.fileList.modifiedSelection()
+		if !ok || idx < 0 || idx >= len(m.fileList.files) {
+			break
+		}
+		return m, m.toggleStageForPath(path, m.fileList.files[idx].Staged)
 
 	case key.Matches(msg, keys.Save):
 		return m.beginSaveAndQuit()
@@ -1686,6 +1968,8 @@ func (m Model) helpView() string {
 		{"] / [", "Next / previous file (includes read)"},
 		{"→ / ←", "Next / previous unread file"},
 		{"m", "Mark selected file read/unread"},
+		{"a", "Stage / unstage selected modified file"},
+		{"^", "File list marker: file has staged changes"},
 		{"} / {", "Next / previous modified file"},
 		{"M", "Jump to first modified file"},
 		{"t", "Toggle changed / all files"},
@@ -1880,6 +2164,7 @@ func (m Model) renderFooter() string {
 		"`]/[`next/prev",
 		"`←/→`next/prev(unread)",
 		"`m`toggle read",
+		"`a`stage/unstage",
 		"`h/l`commit",
 		"`e`expand",
 		"`t`changed/all",
@@ -1890,6 +2175,7 @@ func (m Model) renderFooter() string {
 	navParts = append(navParts, "`</>`resize")
 	navInfo := fmt.Sprintf(" %s  [%s] %s  %s",
 		strings.Join(navParts, " "), fileMode, fileCount, commentCount)
+	navInfo += "  `^`staged"
 	if m.statusMsg != "" {
 		navInfo += "  " + lipgloss.NewStyle().Foreground(colorYellow).Render(m.statusMsg)
 	}

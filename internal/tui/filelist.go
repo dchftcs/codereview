@@ -869,9 +869,13 @@ func (fl *fileList) viewTree(width int) string {
 				commentMarker = fmt.Sprintf(" [%d]", len(cc))
 			}
 		}
+		stageMarker := ""
+		if modified && modIdx >= 0 && modIdx < len(fl.files) && fl.files[modIdx].Staged {
+			stageMarker = " ^"
+		}
 
 		// "* " or "  " prefix takes 2 chars
-		labelBudget := maxW - 2 - len(stat) - len(commentMarker)
+		labelBudget := maxW - 2 - len(stat) - len(commentMarker) - len(stageMarker)
 		label := indent + prefix + name
 		if len(label) > labelBudget && labelBudget > 0 {
 			label = label[:labelBudget]
@@ -897,6 +901,13 @@ func (fl *fileList) viewTree(width int) string {
 				label += commentMarker
 			} else {
 				label += lipgloss.NewStyle().Foreground(colorYellow).Render(commentMarker)
+			}
+		}
+		if stageMarker != "" {
+			if read {
+				label += stageMarker
+			} else {
+				label += lipgloss.NewStyle().Foreground(colorBlue).Render(stageMarker)
 			}
 		}
 

@@ -147,6 +147,9 @@ func TestFooterNavigationHintsAdaptToFileMode(t *testing.T) {
 	if !strings.Contains(changedFooter, "`m`toggle read") {
 		t.Fatalf("changed footer missing toggle-read hint: %q", changedFooter)
 	}
+	if !strings.Contains(changedFooter, "`a`stage/unstage") {
+		t.Fatalf("changed footer missing stage hint: %q", changedFooter)
+	}
 	if strings.Contains(changedFooter, "`}/{`modified") {
 		t.Fatalf("changed footer should not show modified hint: %q", changedFooter)
 	}

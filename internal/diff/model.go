@@ -33,10 +33,11 @@ type Hunk struct {
 }
 
 type FileDiff struct {
-	OldName   string
-	NewName   string
-	Hunks     []Hunk
-	Binary    bool
-	Untracked bool
-	Staged    bool
+	OldName        string
+	NewName        string
+	Hunks          []Hunk
+	Binary         bool
+	Untracked      bool
+	Staged         bool
+	CollapsedCount int // >0 means this is a collapsed untracked directory summary
 }

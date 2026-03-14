@@ -10,23 +10,27 @@ import (
 )
 
 type fakeGitService struct {
-	diffOut     string
-	diffErr     error
-	diffCalls   int
-	diffRevSpec string
+	diffOut          string
+	diffCollapsed    []gitpkg.CollapsedDir
+	diffErr          error
+	diffCalls        int
+	diffRevSpec      string
 
-	diffFullOut     string
-	diffFullErr     error
-	diffFullCalls   int
-	diffFullRevSpec string
+	diffFullOut          string
+	diffFullCollapsed    []gitpkg.CollapsedDir
+	diffFullErr          error
+	diffFullCalls        int
+	diffFullRevSpec      string
 
-	diffUnstagedOut   string
-	diffUnstagedErr   error
-	diffUnstagedCalls int
+	diffUnstagedOut          string
+	diffUnstagedCollapsed    []gitpkg.CollapsedDir
+	diffUnstagedErr          error
+	diffUnstagedCalls        int
 
-	diffUnstagedFullOut   string
-	diffUnstagedFullErr   error
-	diffUnstagedFullCalls int
+	diffUnstagedFullOut          string
+	diffUnstagedFullCollapsed    []gitpkg.CollapsedDir
+	diffUnstagedFullErr          error
+	diffUnstagedFullCalls        int
 
 	logOut   []gitpkg.CommitInfo
 	logErr   error
@@ -49,26 +53,26 @@ type fakeGitService struct {
 	untrackedCalls int
 }
 
-func (f *fakeGitService) Diff(revSpec string) (string, error) {
+func (f *fakeGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
 	f.diffCalls++
 	f.diffRevSpec = revSpec
-	return f.diffOut, f.diffErr
+	return f.diffOut, f.diffCollapsed, f.diffErr
 }
 
-func (f *fakeGitService) DiffFull(revSpec string) (string, error) {
+func (f *fakeGitService) DiffFull(revSpec string) (string, []gitpkg.CollapsedDir, error) {
 	f.diffFullCalls++
 	f.diffFullRevSpec = revSpec
-	return f.diffFullOut, f.diffFullErr
+	return f.diffFullOut, f.diffFullCollapsed, f.diffFullErr
 }
 
-func (f *fakeGitService) DiffUnstaged() (string, error) {
+func (f *fakeGitService) DiffUnstaged() (string, []gitpkg.CollapsedDir, error) {
 	f.diffUnstagedCalls++
-	return f.diffUnstagedOut, f.diffUnstagedErr
+	return f.diffUnstagedOut, f.diffUnstagedCollapsed, f.diffUnstagedErr
 }
 
-func (f *fakeGitService) DiffUnstagedFull() (string, error) {
+func (f *fakeGitService) DiffUnstagedFull() (string, []gitpkg.CollapsedDir, error) {
 	f.diffUnstagedFullCalls++
-	return f.diffUnstagedFullOut, f.diffUnstagedFullErr
+	return f.diffUnstagedFullOut, f.diffUnstagedFullCollapsed, f.diffUnstagedFullErr
 }
 
 func (f *fakeGitService) Log(n int) ([]gitpkg.CommitInfo, error) {

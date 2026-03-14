@@ -846,21 +846,30 @@ func (fl *fileList) viewTree(width int) string {
 			modIdx = idx
 		}
 
+		// Collapsed directory entries show with trailing "/" in the name.
+		if modified && modIdx >= 0 && modIdx < len(fl.files) && fl.files[modIdx].CollapsedCount > 0 {
+			name += "/"
+		}
+
 		// Build stat suffix for modified files
 		stat := ""
 		if modified && modIdx >= 0 && modIdx < len(fl.files) {
-			adds, dels := 0, 0
-			for _, h := range fl.files[modIdx].Hunks {
-				for _, l := range h.Lines {
-					switch l.Op {
-					case diff.OpInsert:
-						adds++
-					case diff.OpDelete:
-						dels++
+			if fl.files[modIdx].CollapsedCount > 0 {
+				stat = fmt.Sprintf(" (%d files)", fl.files[modIdx].CollapsedCount)
+			} else {
+				adds, dels := 0, 0
+				for _, h := range fl.files[modIdx].Hunks {
+					for _, l := range h.Lines {
+						switch l.Op {
+						case diff.OpInsert:
+							adds++
+						case diff.OpDelete:
+							dels++
+						}
 					}
 				}
+				stat = fmt.Sprintf(" +%d -%d", adds, dels)
 			}
-			stat = fmt.Sprintf(" +%d -%d", adds, dels)
 		}
 
 		commentMarker := ""

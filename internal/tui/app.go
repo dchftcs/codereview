@@ -45,10 +45,10 @@ const (
 
 // GitService is the narrow git surface needed by the TUI.
 type GitService interface {
-	Diff(revSpec string) (string, error)
-	DiffFull(revSpec string) (string, error)
-	DiffUnstaged() (string, error)
-	DiffUnstagedFull() (string, error)
+	Diff(revSpec string) (string, []gitpkg.CollapsedDir, error)
+	DiffFull(revSpec string) (string, []gitpkg.CollapsedDir, error)
+	DiffUnstaged() (string, []gitpkg.CollapsedDir, error)
+	DiffUnstagedFull() (string, []gitpkg.CollapsedDir, error)
 	Log(n int) ([]gitpkg.CommitInfo, error)
 	Status() ([]gitpkg.FileStatus, error)
 	Stage(path string) error
@@ -58,19 +58,19 @@ type GitService interface {
 
 type defaultGitService struct{}
 
-func (defaultGitService) Diff(revSpec string) (string, error) {
+func (defaultGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
 	return gitpkg.Diff(revSpec)
 }
 
-func (defaultGitService) DiffFull(revSpec string) (string, error) {
+func (defaultGitService) DiffFull(revSpec string) (string, []gitpkg.CollapsedDir, error) {
 	return gitpkg.DiffFull(revSpec)
 }
 
-func (defaultGitService) DiffUnstaged() (string, error) {
+func (defaultGitService) DiffUnstaged() (string, []gitpkg.CollapsedDir, error) {
 	return gitpkg.DiffUnstaged()
 }
 
-func (defaultGitService) DiffUnstagedFull() (string, error) {
+func (defaultGitService) DiffUnstagedFull() (string, []gitpkg.CollapsedDir, error) {
 	return gitpkg.DiffUnstagedFull()
 }
 
@@ -272,6 +272,7 @@ type diffLoadedMsg struct {
 	files             []diff.FileDiff
 	commits           []gitpkg.CommitInfo
 	untracked         []string
+	collapsedDirs     []gitpkg.CollapsedDir
 	statuses          []gitpkg.FileStatus
 	preserveSelection string
 	statusEpoch       int
@@ -290,13 +291,14 @@ func (m *Model) loadDiffWithSelection(preserveSelection string) tea.Cmd {
 func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int) tea.Cmd {
 	return func() tea.Msg {
 		var (
-			rawDiff string
-			err     error
+			rawDiff      string
+			collapsedDirs []gitpkg.CollapsedDir
+			err          error
 		)
 		if m.config.UnstagedOnly {
-			rawDiff, err = m.git.DiffUnstaged()
+			rawDiff, collapsedDirs, err = m.git.DiffUnstaged()
 		} else {
-			rawDiff, err = m.git.Diff(m.config.RevSpec)
+			rawDiff, collapsedDirs, err = m.git.Diff(m.config.RevSpec)
 		}
 		if err != nil {
 			return diffLoadedMsg{err: err}
@@ -315,6 +317,7 @@ func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int)
 			files:             files,
 			commits:           commits,
 			untracked:         untracked,
+			collapsedDirs:     collapsedDirs,
 			statuses:          statuses,
 			preserveSelection: preserveSelection,
 			statusEpoch:       statusEpoch,
@@ -397,9 +400,9 @@ func (m Model) loadExpandedDiff() tea.Cmd {
 			err     error
 		)
 		if m.config.UnstagedOnly {
-			rawDiff, err = m.git.DiffUnstagedFull()
+			rawDiff, _, err = m.git.DiffUnstagedFull()
 		} else {
-			rawDiff, err = m.git.DiffFull(m.config.RevSpec)
+			rawDiff, _, err = m.git.DiffFull(m.config.RevSpec)
 		}
 		if err != nil {
 			return expandLoadedMsg{err: err}
@@ -649,6 +652,15 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 				msg.files[i].Untracked = true
 			}
 		}
+	}
+	// Append synthetic entries for collapsed untracked directories.
+	for _, cd := range msg.collapsedDirs {
+		msg.files = append(msg.files, diff.FileDiff{
+			OldName:        "/dev/null",
+			NewName:        cd.Dir,
+			Untracked:      true,
+			CollapsedCount: cd.Count,
+		})
 	}
 	if len(m.statusSnapshot) > 0 {
 		applySnapshotToFiles(msg.files, m.statusSnapshot)
@@ -2053,7 +2065,7 @@ func (m *Model) navigateCommit(delta int) tea.Cmd {
 	m.review.CommitSubject = commit.Subject
 
 	return func() tea.Msg {
-		rawDiff, err := m.git.Diff(commit.Hash)
+		rawDiff, _, err := m.git.Diff(commit.Hash)
 		if err != nil {
 			return commitLoadedMsg{err: err, idx: newIdx, commit: commit}
 		}

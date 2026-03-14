@@ -3,12 +3,20 @@ package git
 import (
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
 type CommitInfo struct {
 	Hash    string
 	Subject string
+}
+
+// CollapsedDir represents a directory with many untracked files that was
+// collapsed instead of diffing each file individually.
+type CollapsedDir struct {
+	Dir   string
+	Count int
 }
 
 type FileStatus struct {
@@ -21,7 +29,7 @@ type FileStatus struct {
 
 // Log returns recent commits as a list.
 func Log(n int) ([]CommitInfo, error) {
-	out, err := run("log", "--oneline", fmt.Sprintf("-n%d", n), "--no-decorate")
+	out, err := runNoLock("log", "--oneline", fmt.Sprintf("-n%d", n), "--no-decorate")
 	if err != nil {
 		return nil, err
 	}
@@ -40,29 +48,90 @@ func Log(n int) ([]CommitInfo, error) {
 	return commits, nil
 }
 
+// maxIndividualUntracked is the threshold above which GroupUntrackedFiles
+// starts collapsing the largest directories to keep load times reasonable.
+const maxIndividualUntracked = 100
+
+// GroupUntrackedFiles splits a list of untracked file paths into files that
+// should be diffed individually and directories that should be collapsed.
+// If the total count is <= maxIndividual, everything is individual.
+// Otherwise, files are grouped by top-level directory and the largest
+// directories are collapsed until the remaining count fits.
+func GroupUntrackedFiles(files []string, maxIndividual int) (individual []string, collapsed []CollapsedDir) {
+	if len(files) <= maxIndividual {
+		return files, nil
+	}
+
+	// Group by top-level directory component. Root-level files are always individual.
+	dirCounts := make(map[string][]string)
+	var rootFiles []string
+	for _, f := range files {
+		slash := strings.IndexByte(f, '/')
+		if slash < 0 {
+			rootFiles = append(rootFiles, f)
+		} else {
+			dir := f[:slash]
+			dirCounts[dir] = append(dirCounts[dir], f)
+		}
+	}
+
+	// Sort directories by file count descending so we collapse the biggest first.
+	type dirEntry struct {
+		dir   string
+		files []string
+	}
+	dirs := make([]dirEntry, 0, len(dirCounts))
+	for d, fs := range dirCounts {
+		dirs = append(dirs, dirEntry{dir: d, files: fs})
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		return len(dirs[i].files) > len(dirs[j].files)
+	})
+
+	remaining := len(files)
+	collapsedSet := make(map[string]bool)
+	for _, d := range dirs {
+		if remaining <= maxIndividual {
+			break
+		}
+		collapsedSet[d.dir] = true
+		collapsed = append(collapsed, CollapsedDir{Dir: d.dir, Count: len(d.files)})
+		remaining -= len(d.files)
+	}
+
+	individual = rootFiles
+	for _, d := range dirs {
+		if collapsedSet[d.dir] {
+			continue
+		}
+		individual = append(individual, d.files...)
+	}
+	return individual, collapsed
+}
+
 // Diff returns the unified diff for the given revision spec.
 // If revSpec is empty, returns uncommitted changes (working tree vs HEAD).
 // Supports two-dot (a..b) and three-dot (a...b) syntax.
-func Diff(revSpec string) (string, error) {
+func Diff(revSpec string) (string, []CollapsedDir, error) {
 	return diffInternal(revSpec, false)
 }
 
 // DiffFull returns the diff with full file context (all lines visible).
-func DiffFull(revSpec string) (string, error) {
+func DiffFull(revSpec string) (string, []CollapsedDir, error) {
 	return diffInternal(revSpec, true)
 }
 
 // DiffUnstaged returns only unstaged tracked changes plus untracked files.
-func DiffUnstaged() (string, error) {
+func DiffUnstaged() (string, []CollapsedDir, error) {
 	return diffUnstagedInternal(false)
 }
 
 // DiffUnstagedFull returns only unstaged tracked changes plus untracked files with full context.
-func DiffUnstagedFull() (string, error) {
+func DiffUnstagedFull() (string, []CollapsedDir, error) {
 	return diffUnstagedInternal(true)
 }
 
-func diffInternal(revSpec string, fullContext bool) (string, error) {
+func diffInternal(revSpec string, fullContext bool) (string, []CollapsedDir, error) {
 	ctx := []string{}
 	if fullContext {
 		ctx = []string{"-U99999"}
@@ -70,7 +139,7 @@ func diffInternal(revSpec string, fullContext bool) (string, error) {
 	if revSpec == "" {
 		out, err := run(append([]string{"diff"}, append(ctx, "HEAD")...)...)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		return appendUntrackedDiff(out, fullContext)
 	}
@@ -80,36 +149,39 @@ func diffInternal(revSpec string, fullContext bool) (string, error) {
 		base, head := parts[0], parts[1]
 		mergeBase, err := MergeBase(base, head)
 		if err != nil {
-			return "", fmt.Errorf("finding merge base: %w", err)
+			return "", nil, fmt.Errorf("finding merge base: %w", err)
 		}
 		// For default branch-vs-HEAD review, include committed + staged + unstaged
 		// changes by diffing merge-base directly to the working tree.
 		if head == "HEAD" {
 			out, err := run(append([]string{"diff"}, append(ctx, mergeBase)...)...)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			return appendUntrackedDiff(out, fullContext)
 		}
-		return run(append([]string{"diff"}, append(ctx, mergeBase, head)...)...)
+		out, err := run(append([]string{"diff"}, append(ctx, mergeBase, head)...)...)
+		return out, nil, err
 	}
 	// Two-dot range
 	if strings.Contains(revSpec, "..") {
-		return run(append([]string{"diff"}, append(ctx, revSpec)...)...)
+		out, err := run(append([]string{"diff"}, append(ctx, revSpec)...)...)
+		return out, nil, err
 	}
 	// Single commit — use show to handle root commits (no parent)
 	args := append([]string{"show", "--format="}, append(ctx, revSpec)...)
-	return run(args...)
+	out, err := run(args...)
+	return out, nil, err
 }
 
-func diffUnstagedInternal(fullContext bool) (string, error) {
+func diffUnstagedInternal(fullContext bool) (string, []CollapsedDir, error) {
 	ctx := []string{}
 	if fullContext {
 		ctx = []string{"-U99999"}
 	}
 	out, err := run(append([]string{"diff"}, ctx...)...)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	return appendUntrackedDiff(out, fullContext)
 }
@@ -159,7 +231,7 @@ func DefaultBranch() string {
 
 // UntrackedFiles returns untracked file paths (relative to repo root).
 func UntrackedFiles() ([]string, error) {
-	out, err := run("ls-files", "--others", "--exclude-standard")
+	out, err := runNoLock("ls-files", "--others", "--exclude-standard")
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +249,7 @@ func UntrackedFiles() ([]string, error) {
 
 // Status returns git porcelain status entries keyed to working-tree paths.
 func Status() ([]FileStatus, error) {
-	out, err := run("status", "--porcelain=v1")
+	out, err := runNoLock("status", "--porcelain=v1")
 	if err != nil {
 		return nil, err
 	}
@@ -221,18 +293,20 @@ func parsePorcelainStatus(out string) []FileStatus {
 	return statuses
 }
 
-func appendUntrackedDiff(base string, fullContext bool) (string, error) {
+func appendUntrackedDiff(base string, fullContext bool) (string, []CollapsedDir, error) {
 	files, err := UntrackedFiles()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(files) == 0 {
-		return base, nil
+		return base, nil, nil
 	}
+
+	individual, collapsed := GroupUntrackedFiles(files, maxIndividualUntracked)
 
 	var b strings.Builder
 	b.WriteString(base)
-	for _, p := range files {
+	for _, p := range individual {
 		args := []string{"diff", "--no-index"}
 		if fullContext {
 			args = append(args, "-U99999")
@@ -240,7 +314,7 @@ func appendUntrackedDiff(base string, fullContext bool) (string, error) {
 		args = append(args, "--", "/dev/null", p)
 		out, err := runAllowExitCode(args...)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if strings.TrimSpace(out) == "" {
 			continue
@@ -250,7 +324,7 @@ func appendUntrackedDiff(base string, fullContext bool) (string, error) {
 		}
 		b.WriteString(out)
 	}
-	return b.String(), nil
+	return b.String(), collapsed, nil
 }
 
 func run(args ...string) (string, error) {
@@ -263,6 +337,13 @@ func run(args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// runNoLock runs a read-only git command with --no-optional-locks to avoid
+// acquiring the index lock for stat-cache refreshes. This prevents lock
+// contention between polling reads and index-modifying operations (add/restore).
+func runNoLock(args ...string) (string, error) {
+	return run(append([]string{"--no-optional-locks"}, args...)...)
 }
 
 func runAllowExitCode(args ...string) (string, error) {

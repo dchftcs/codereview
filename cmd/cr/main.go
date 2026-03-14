@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,23 @@ func main() {
 	}
 	revSpec := resolved.RevSpec
 	pathFilter := resolved.PathFilter
+
+	// If the path filter points to a directory outside the current repo
+	// (e.g. "../other-repo/"), chdir there and review that repo instead.
+	if pathFilter != "" {
+		if abs, err := filepath.Abs(targetArg); err == nil {
+			if info, err := os.Stat(abs); err == nil && info.IsDir() {
+				if isOutsideRepo(abs) {
+					if err := os.Chdir(abs); err != nil {
+						fmt.Fprintf(os.Stderr, "Error: cannot chdir to %s: %v\n", abs, err)
+						os.Exit(1)
+					}
+					pathFilter = ""
+				}
+			}
+		}
+	}
+
 	if unstagedMode && revSpec != "" {
 		fmt.Fprintf(os.Stderr, "Error: --unstaged cannot be combined with a revision argument\n\n")
 		printUsage()
@@ -205,6 +223,18 @@ func promptArgumentDisambiguation(arg string, in io.Reader, out io.Writer) (bool
 			return false, nil
 		}
 	}
+}
+
+// isOutsideRepo reports whether abs is outside the current git repository's
+// working tree (or the repo root cannot be determined).
+func isOutsideRepo(abs string) bool {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return true
+	}
+	root := strings.TrimSpace(string(out))
+	return !strings.HasPrefix(abs, root+string(filepath.Separator)) && abs != root
 }
 
 func pathExists(p string) bool {

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,7 +65,7 @@ func TestDiffVariants(t *testing.T) {
 	commitFile(t, repo, "demo.txt", "main-one\ntwo\nthree\n", "main change")
 
 	chdir(t, repo)
-	threeDot, err := Diff("main...feature")
+	threeDot, _, err := Diff("main...feature")
 	if err != nil {
 		t.Fatalf("Diff(main...feature) returned error: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestDiffVariants(t *testing.T) {
 		t.Fatalf("unexpected three-dot diff output:\n%s", threeDot)
 	}
 
-	twoDot, err := Diff(base + ".." + featureCommit)
+	twoDot, _, err := Diff(base + ".." + featureCommit)
 	if err != nil {
 		t.Fatalf("Diff(two-dot) returned error: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestDiffVariants(t *testing.T) {
 		t.Fatalf("two-dot diff missing feature content:\n%s", twoDot)
 	}
 
-	single, err := Diff(featureCommit)
+	single, _, err := Diff(featureCommit)
 	if err != nil {
 		t.Fatalf("Diff(single commit) returned error: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestDiffVariants(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("untracked-line\n"), 0644); err != nil {
 		t.Fatalf("WriteFile untracked change: %v", err)
 	}
-	working, err := Diff("")
+	working, _, err := Diff("")
 	if err != nil {
 		t.Fatalf("Diff(\"\") returned error: %v", err)
 	}
@@ -116,11 +117,11 @@ func TestDiffFullHasMoreContext(t *testing.T) {
 	target := commitFile(t, repo, "ctx.txt", changed, "change middle")
 
 	chdir(t, repo)
-	normal, err := Diff(target)
+	normal, _, err := Diff(target)
 	if err != nil {
 		t.Fatalf("Diff returned error: %v", err)
 	}
-	full, err := DiffFull(target)
+	full, _, err := DiffFull(target)
 	if err != nil {
 		t.Fatalf("DiffFull returned error: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestThreeDotHeadIncludesWorkingTreeAndStagedChanges(t *testing.T) {
 	}
 
 	chdir(t, repo)
-	out, err := Diff("main...HEAD")
+	out, _, err := Diff("main...HEAD")
 	if err != nil {
 		t.Fatalf("Diff(main...HEAD) returned error: %v", err)
 	}
@@ -219,6 +220,175 @@ func TestParsePorcelainStatus(t *testing.T) {
 	if got[3].Path != "untracked.txt" || got[3].Index != '?' || got[3].Worktree != '?' {
 		t.Fatalf("unexpected untracked entry: %+v", got[3])
 	}
+}
+
+func TestStageUnstageIntegration(t *testing.T) {
+	ensureGitAvailable(t)
+
+	repo := initRepo(t, "main")
+	commitFile(t, repo, "a.go", "package a\n", "initial")
+
+	// Create a modified file to stage/unstage.
+	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n// changed\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	chdir(t, repo)
+
+	// Stage the file.
+	if err := Stage("a.go"); err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	statuses, err := Status()
+	if err != nil {
+		t.Fatalf("Status after stage: %v", err)
+	}
+	var found bool
+	for _, st := range statuses {
+		if st.Path == "a.go" && st.Index == 'M' {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a.go staged (M in index) but got: %+v", statuses)
+	}
+
+	// Unstage the file.
+	if err := Unstage("a.go"); err != nil {
+		t.Fatalf("Unstage: %v", err)
+	}
+	statuses, err = Status()
+	if err != nil {
+		t.Fatalf("Status after unstage: %v", err)
+	}
+	for _, st := range statuses {
+		if st.Path == "a.go" && st.Index == 'M' {
+			t.Fatalf("expected a.go unstaged after Unstage but index still shows M")
+		}
+	}
+}
+
+func TestNoIndexLockContentionBetweenStatusAndStage(t *testing.T) {
+	ensureGitAvailable(t)
+
+	repo := initRepo(t, "main")
+	commitFile(t, repo, "a.go", "package a\n", "initial")
+
+	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n// changed\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	chdir(t, repo)
+
+	// Simulate the real polling pattern: one Stage operation runs while
+	// many concurrent Status polls (using --no-optional-locks) fire.
+	// This mirrors the TUI where a 300ms status poll can overlap with
+	// a user-triggered stage toggle.
+	const polls = 20
+	errs := make(chan error, polls+1)
+
+	// Start the stage operation.
+	go func() {
+		errs <- Stage("a.go")
+	}()
+
+	// Fire many status polls concurrently.
+	for i := 0; i < polls; i++ {
+		go func() {
+			_, err := Status()
+			errs <- err
+		}()
+	}
+
+	for i := 0; i < polls+1; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent git operation failed: %v", err)
+		}
+	}
+
+	// Verify no stale lock file remains.
+	lockPath := filepath.Join(repo, ".git", "index.lock")
+	if _, err := os.Stat(lockPath); err == nil {
+		t.Fatalf("stale index.lock found at %s", lockPath)
+	}
+}
+
+func TestGroupUntrackedFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("under threshold returns all individual", func(t *testing.T) {
+		files := []string{"a.txt", "b.txt", "dir/c.txt"}
+		ind, col := GroupUntrackedFiles(files, 100)
+		if len(ind) != 3 {
+			t.Fatalf("individual count = %d, want 3", len(ind))
+		}
+		if len(col) != 0 {
+			t.Fatalf("collapsed count = %d, want 0", len(col))
+		}
+	})
+
+	t.Run("over threshold collapses largest dirs", func(t *testing.T) {
+		var files []string
+		// 150 files in "bigdir/"
+		for i := 0; i < 150; i++ {
+			files = append(files, fmt.Sprintf("bigdir/file%d.txt", i))
+		}
+		// 5 files in "smalldir/"
+		for i := 0; i < 5; i++ {
+			files = append(files, fmt.Sprintf("smalldir/f%d.txt", i))
+		}
+		// 3 root-level files
+		files = append(files, "root1.txt", "root2.txt", "root3.txt")
+
+		ind, col := GroupUntrackedFiles(files, 100)
+		// bigdir (150 files) should be collapsed, leaving 5+3=8 individual
+		if len(col) != 1 {
+			t.Fatalf("collapsed dirs = %d, want 1", len(col))
+		}
+		if col[0].Dir != "bigdir" || col[0].Count != 150 {
+			t.Fatalf("collapsed = %+v, want {Dir:bigdir Count:150}", col[0])
+		}
+		if len(ind) != 8 {
+			t.Fatalf("individual count = %d, want 8", len(ind))
+		}
+	})
+
+	t.Run("root files are never collapsed", func(t *testing.T) {
+		var files []string
+		for i := 0; i < 200; i++ {
+			files = append(files, fmt.Sprintf("root%d.txt", i))
+		}
+		ind, col := GroupUntrackedFiles(files, 100)
+		// All files are at root level, so nothing can be collapsed
+		if len(col) != 0 {
+			t.Fatalf("collapsed count = %d, want 0 (root files can't collapse)", len(col))
+		}
+		if len(ind) != 200 {
+			t.Fatalf("individual count = %d, want 200", len(ind))
+		}
+	})
+
+	t.Run("multiple dirs collapsed until under threshold", func(t *testing.T) {
+		var files []string
+		for i := 0; i < 80; i++ {
+			files = append(files, fmt.Sprintf("a/file%d.txt", i))
+		}
+		for i := 0; i < 60; i++ {
+			files = append(files, fmt.Sprintf("b/file%d.txt", i))
+		}
+		for i := 0; i < 10; i++ {
+			files = append(files, fmt.Sprintf("c/file%d.txt", i))
+		}
+		// Total: 150. Threshold: 50.
+		// Collapse a/ (80) -> remaining 70, still > 50
+		// Collapse b/ (60) -> remaining 10, <= 50
+		ind, col := GroupUntrackedFiles(files, 50)
+		if len(col) != 2 {
+			t.Fatalf("collapsed dirs = %d, want 2", len(col))
+		}
+		if len(ind) != 10 {
+			t.Fatalf("individual count = %d, want 10", len(ind))
+		}
+	})
 }
 
 func ensureGitAvailable(t *testing.T) {

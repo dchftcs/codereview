@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -179,7 +178,7 @@ func (dv *diffView) setFile(f *diff.FileDiff, rev *review.Review) {
 // setFileKeepPosition switches the file data but keeps the cursor on the same
 // line number at the same screen row. Used when toggling expand.
 func (dv *diffView) setFileKeepPosition(f *diff.FileDiff, rev *review.Review) {
-	// Remember current line number and its screen offset
+	// Remember current line number and its screen offset (in screen lines, not logical rows)
 	oldLineNum := 0
 	anchor := diffRowAnchor{}
 	if dv.cursorY < len(dv.rows) {
@@ -187,7 +186,7 @@ func (dv *diffView) setFileKeepPosition(f *diff.FileDiff, rev *review.Review) {
 		oldLineNum = oldRow.lineNum
 		anchor = anchorFromRow(oldRow)
 	}
-	screenRow := dv.cursorY - dv.scrollY
+	screenOffset := dv.screenLinesInRange(dv.scrollY, dv.cursorY)
 
 	dv.file = f
 	dv.comments = rev
@@ -198,7 +197,14 @@ func (dv *diffView) setFileKeepPosition(f *diff.FileDiff, rev *review.Review) {
 	newCursor := dv.findBestAnchorRow(anchor, oldLineNum, dv.cursorY)
 
 	dv.cursorY = newCursor
-	dv.scrollY = newCursor - screenRow
+	// Find scrollY such that cursor has the same screen-line offset from viewport top.
+	accum := 0
+	sy := newCursor
+	for sy > 0 && accum < screenOffset {
+		sy--
+		accum += dv.screenLinesForRow(sy)
+	}
+	dv.scrollY = sy
 	dv.clampKeepPosition()
 }
 
@@ -401,13 +407,16 @@ func (dv *diffView) moveCursor(n int) {
 }
 
 // scrollByRows scrolls the viewport by row count while keeping the cursor
-// anchored to the same on-screen row where possible.
+// anchored to the same on-screen position where possible. Uses screen-line-aware
+// measurement so soft-wrapped rows are handled correctly.
 func (dv *diffView) scrollByRows(n int) {
 	if len(dv.rows) == 0 || n == 0 {
 		return
 	}
 
-	screenRow := dv.cursorY - dv.scrollY
+	// Remember cursor's screen-line offset from viewport top.
+	cursorScreenOffset := dv.screenLinesInRange(dv.scrollY, dv.cursorY)
+
 	maxScroll := len(dv.rows) - 1
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -421,13 +430,21 @@ func (dv *diffView) scrollByRows(n int) {
 		dv.scrollY = maxScroll
 	}
 
+	// Restore cursor to the same screen-line offset from new scrollY.
+	accum := 0
+	dv.cursorY = dv.scrollY
+	for i := dv.scrollY; i < len(dv.rows); i++ {
+		if accum >= cursorScreenOffset {
+			dv.cursorY = i
+			break
+		}
+		dv.cursorY = i
+		accum += dv.screenLinesForRow(i)
+	}
+
 	maxCursor := len(dv.rows) - 1
 	if maxCursor < 0 {
 		maxCursor = 0
-	}
-	dv.cursorY = dv.scrollY + screenRow
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
 	}
 	if dv.cursorY > maxCursor {
 		dv.cursorY = maxCursor
@@ -440,14 +457,14 @@ func (dv *diffView) scrollByRows(n int) {
 	if dv.cursorY < dv.scrollY {
 		dv.cursorY = dv.scrollY
 	}
-	maxVisible := dv.scrollY + viewportHeight - 1
-	if dv.cursorY > maxVisible {
-		dv.cursorY = maxVisible
+	last := dv.lastVisibleRow()
+	if dv.cursorY > last {
+		dv.cursorY = last
 	}
 }
 
 // windowScrollByRows scrolls the viewport by row count without anchoring
-// movement to the cursor position.
+// movement to the cursor position. Uses screen-line-aware boundaries.
 func (dv *diffView) windowScrollByRows(n int) {
 	if len(dv.rows) == 0 || n == 0 {
 		return
@@ -478,11 +495,33 @@ func (dv *diffView) windowScrollByRows(n int) {
 		margin = 0
 	}
 
-	topBoundary := dv.scrollY + margin
-	bottomBoundary := dv.scrollY + viewportHeight - margin - 1
+	// Find top boundary: first row whose top edge is at or past the margin.
+	topBoundary := dv.scrollY
+	accum := 0
+	for i := dv.scrollY; i < len(dv.rows); i++ {
+		if accum >= margin {
+			topBoundary = i
+			break
+		}
+		topBoundary = i
+		accum += dv.screenLinesForRow(i)
+	}
+
+	// Find bottom boundary: last row whose bottom edge fits within viewport - margin.
+	bottomBoundary := dv.scrollY
+	accum = 0
+	for i := dv.scrollY; i < len(dv.rows); i++ {
+		rowH := dv.screenLinesForRow(i)
+		if accum+rowH > viewportHeight-margin {
+			break
+		}
+		bottomBoundary = i
+		accum += rowH
+	}
+
 	if bottomBoundary < topBoundary {
 		topBoundary = dv.scrollY
-		bottomBoundary = dv.scrollY + viewportHeight - 1
+		bottomBoundary = dv.lastVisibleRow()
 	}
 
 	if dv.cursorY < topBoundary {
@@ -674,12 +713,14 @@ func (dv *diffView) clampKeepPosition() {
 	if viewportHeight <= 0 {
 		return
 	}
-	minScroll := int(math.Max(0, float64(dv.cursorY-(viewportHeight-1))))
-	if dv.scrollY < minScroll {
-		dv.scrollY = minScroll
-	}
+
+	// Ensure cursor is not above viewport.
 	if dv.scrollY > dv.cursorY {
 		dv.scrollY = dv.cursorY
+	}
+	// Ensure cursor fits in viewport using screen-line-aware measurement.
+	for dv.scrollY < dv.cursorY && dv.screenLinesInRange(dv.scrollY, dv.cursorY+1) > viewportHeight {
+		dv.scrollY++
 	}
 }
 
@@ -705,16 +746,44 @@ func (dv *diffView) scrollCursorIntoMargin() {
 		margin = 0
 	}
 
-	// Keep the cursor away from the viewport edges so scrolling starts
-	// before the cursor reaches the exact top or bottom line.
-	topBoundary := dv.scrollY + margin
-	bottomBoundary := dv.scrollY + viewportHeight - margin - 1
-
-	if dv.cursorY < topBoundary {
-		dv.scrollY = dv.cursorY - margin
+	// Measure cursor position in screen lines, accounting for soft-wrap.
+	var cursorOffset int
+	if dv.cursorY >= dv.scrollY {
+		cursorOffset = dv.screenLinesInRange(dv.scrollY, dv.cursorY)
+	} else {
+		cursorOffset = -dv.screenLinesInRange(dv.cursorY, dv.scrollY)
 	}
-	if dv.cursorY > bottomBoundary {
-		dv.scrollY = dv.cursorY - (viewportHeight - margin - 1)
+	cursorHeight := dv.screenLinesForRow(dv.cursorY)
+
+	if cursorOffset < margin {
+		// Cursor too close to top (or above viewport): scroll up so cursor
+		// has at least `margin` screen lines above it.
+		accum := 0
+		sy := dv.cursorY
+		for sy > 0 && accum < margin {
+			sy--
+			accum += dv.screenLinesForRow(sy)
+		}
+		dv.scrollY = sy
+	} else if cursorOffset+cursorHeight > viewportHeight-margin {
+		// Cursor too close to bottom: scroll down so cursor's bottom edge
+		// has at least `margin` screen lines below it.
+		target := viewportHeight - margin
+		accum := cursorHeight
+		sy := dv.cursorY
+		for sy > 0 {
+			sy--
+			rowH := dv.screenLinesForRow(sy)
+			accum += rowH
+			if accum > target {
+				sy++ // went one row too far
+				break
+			}
+			if accum == target {
+				break
+			}
+		}
+		dv.scrollY = sy
 	}
 
 	if dv.scrollY < 0 {
@@ -1553,4 +1622,173 @@ func (dv *diffView) contentViewportHeight() int {
 		return 0
 	}
 	return dv.height - 1
+}
+
+// screenLinesForRow returns how many screen lines a single logical row
+// occupies when rendered, accounting for soft-wrapping.
+func (dv *diffView) screenLinesForRow(rowIdx int) int {
+	if rowIdx < 0 || rowIdx >= len(dv.rows) {
+		return 1
+	}
+	row := dv.rows[rowIdx]
+	switch row.kind {
+	case rowSpacer:
+		return 1
+	case rowHunkHeader:
+		rg := 0
+		if dv.showRelative() {
+			rg = 4
+		}
+		contentW := dv.width - 4 - rg
+		if contentW < 1 {
+			contentW = 1
+		}
+		return len(dv.wrappedChunks(row.hunk, contentW))
+	case rowComment:
+		rg := 0
+		if dv.showRelative() {
+			rg = 4
+		}
+		commentBoxW := dv.width - 6 - rg
+		if commentBoxW < 1 {
+			commentBoxW = 1
+		}
+		commentInnerW := commentBoxW - 4
+		if commentInnerW < 1 {
+			commentInnerW = 1
+		}
+		text := formatCommentBubble(row.comment)
+		wrapped := wrapMultilineToWidth(text, commentInnerW)
+		return len(wrapped) + 2 // +2 for border top/bottom
+	case rowDiffPair:
+		if dv.mode == viewUnified {
+			return dv.unifiedPairScreenLines(row)
+		}
+		return dv.sideBySidePairScreenLines(row)
+	}
+	return 1
+}
+
+func (dv *diffView) sideBySidePairScreenLines(row diffRow) int {
+	rg := 0
+	if dv.showRelative() {
+		rg = 4
+	}
+	colWidth := (dv.width - 4 - (2 * rg)) / 2
+	if colWidth < 20 {
+		colWidth = 20
+	}
+	gutterWidth := 0
+	if dv.showAbsolute() {
+		gutterWidth = 6
+	}
+	textWidth := colWidth - gutterWidth
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	pair := row.pair
+	if pair == nil {
+		return 1
+	}
+	leftN := 1 // nil side renders as 1 blank line
+	rightN := 1
+	if pair.Left != nil {
+		leftN = len(dv.wrappedChunks(pair.Left.Content, textWidth))
+	}
+	if pair.Right != nil {
+		rightN = len(dv.wrappedChunks(pair.Right.Content, textWidth))
+	}
+	if leftN > rightN {
+		return leftN
+	}
+	return rightN
+}
+
+func (dv *diffView) unifiedPairScreenLines(row diffRow) int {
+	rg := 0
+	if dv.showRelative() {
+		rg = 4
+	}
+	absGutter := 0
+	if dv.showAbsolute() {
+		absGutter = 12
+	}
+	contentWidth := dv.width - 4 - rg - absGutter
+	textWidth := contentWidth - 1
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	pair := row.pair
+	if pair == nil {
+		return 1
+	}
+	n := 0
+	if pair.Left != nil && pair.Left.Op == diff.OpDelete {
+		n += len(dv.wrappedChunks(pair.Left.Content, textWidth))
+	}
+	if pair.Right != nil && pair.Right.Op == diff.OpInsert {
+		n += len(dv.wrappedChunks(pair.Right.Content, textWidth))
+	}
+	if pair.Left != nil && pair.Left.Op == diff.OpEqual {
+		n += len(dv.wrappedChunks(pair.Left.Content, textWidth))
+	}
+	if n == 0 {
+		n = 1
+	}
+	return n
+}
+
+// screenLinesInRange returns the total screen lines for rows [from, to).
+func (dv *diffView) screenLinesInRange(from, to int) int {
+	if from >= to {
+		return 0
+	}
+	if from < 0 {
+		from = 0
+	}
+	n := 0
+	for i := from; i < to && i < len(dv.rows); i++ {
+		n += dv.screenLinesForRow(i)
+	}
+	return n
+}
+
+// logicalRowsForScreenLines returns how many logical rows starting at startRow
+// are needed to fill screenLines screen lines.
+func (dv *diffView) logicalRowsForScreenLines(startRow, screenLines int) int {
+	if screenLines <= 0 || startRow >= len(dv.rows) {
+		return 0
+	}
+	if startRow < 0 {
+		startRow = 0
+	}
+	accum := 0
+	count := 0
+	for i := startRow; i < len(dv.rows); i++ {
+		accum += dv.screenLinesForRow(i)
+		count++
+		if accum >= screenLines {
+			break
+		}
+	}
+	return count
+}
+
+// lastVisibleRow returns the index of the last logical row whose top edge
+// is within the viewport.
+func (dv *diffView) lastVisibleRow() int {
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 || len(dv.rows) == 0 {
+		return dv.scrollY
+	}
+	accum := 0
+	last := dv.scrollY
+	for i := dv.scrollY; i < len(dv.rows); i++ {
+		if accum >= viewportHeight {
+			break
+		}
+		last = i
+		accum += dv.screenLinesForRow(i)
+	}
+	return last
 }

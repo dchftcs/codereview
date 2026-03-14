@@ -326,9 +326,16 @@ func TestRenderCachesResetOnSetFileKeepPosition(t *testing.T) {
 
 	dv.cursorY = 5
 	dv.scrollY = 2
+	oldWrapLen := len(dv.wrapCache)
 	dv.setFileKeepPosition(makeLargeFileDiff(41), review.New())
-	if len(dv.highlightCache) != 0 || len(dv.wrapCache) != 0 {
-		t.Fatalf("expected caches reset on setFileKeepPosition, got highlight=%d wrap=%d", len(dv.highlightCache), len(dv.wrapCache))
+	if len(dv.highlightCache) != 0 {
+		t.Fatalf("expected highlight cache reset on setFileKeepPosition, got %d", len(dv.highlightCache))
+	}
+	// Wrap cache may be repopulated with new-file entries during scroll
+	// position restoration (screenLinesForRow calls wrappedChunks), but
+	// old entries must have been cleared first.
+	if len(dv.wrapCache) >= oldWrapLen {
+		t.Fatalf("expected wrap cache to have been reset (old=%d new=%d)", oldWrapLen, len(dv.wrapCache))
 	}
 }
 

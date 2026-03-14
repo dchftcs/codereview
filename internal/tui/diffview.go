@@ -406,6 +406,21 @@ func (dv *diffView) moveCursor(n int) {
 	dv.scrollCursorIntoMargin()
 }
 
+// moveCursorByOrdinalDelta moves relative to the diff-row ordinals used by the
+// relative-number gutter. This skips hunk headers and comment rows when
+// applying the delta, while still preserving normal cursor autoscroll.
+func (dv *diffView) moveCursorByOrdinalDelta(delta int) {
+	if len(dv.rows) == 0 || delta == 0 {
+		return
+	}
+
+	currentOrdinal := dv.nearestOrdinal(delta > 0)
+	if currentOrdinal == 0 {
+		return
+	}
+	dv.moveCursorToOrdinal(currentOrdinal + delta)
+}
+
 // scrollByRows scrolls the viewport by row count while keeping the cursor
 // anchored to the same on-screen position where possible. Uses screen-line-aware
 // measurement so soft-wrapped rows are handled correctly.
@@ -806,6 +821,76 @@ func (dv *diffView) currentLineNum() int {
 		return dv.rows[len(dv.rows)-1].lineNum
 	}
 	return dv.rows[dv.cursorY].lineNum
+}
+
+func (dv *diffView) nearestOrdinal(forward bool) int {
+	if len(dv.rows) == 0 {
+		return 0
+	}
+	if dv.cursorY < 0 {
+		dv.cursorY = 0
+	}
+	if dv.cursorY >= len(dv.rows) {
+		dv.cursorY = len(dv.rows) - 1
+	}
+	if ordinal := dv.rowOrdinalAt(dv.cursorY); ordinal > 0 {
+		return ordinal
+	}
+	if forward {
+		for i := dv.cursorY + 1; i < len(dv.rows); i++ {
+			if ordinal := dv.rowOrdinalAt(i); ordinal > 0 {
+				return ordinal
+			}
+		}
+	}
+	for i := dv.cursorY - 1; i >= 0; i-- {
+		if ordinal := dv.rowOrdinalAt(i); ordinal > 0 {
+			return ordinal
+		}
+	}
+	if !forward {
+		for i := dv.cursorY + 1; i < len(dv.rows); i++ {
+			if ordinal := dv.rowOrdinalAt(i); ordinal > 0 {
+				return ordinal
+			}
+		}
+	}
+	return 0
+}
+
+func (dv *diffView) rowOrdinalAt(row int) int {
+	if row < 0 || row >= len(dv.rows) || row >= len(dv.rowOrdinals) {
+		return 0
+	}
+	if dv.rows[row].kind != rowDiffPair {
+		return 0
+	}
+	return dv.rowOrdinals[row]
+}
+
+func (dv *diffView) moveCursorToOrdinal(ordinal int) {
+	if len(dv.rows) == 0 {
+		return
+	}
+	if ordinal < 1 {
+		ordinal = 1
+	}
+
+	lastDiffRow := -1
+	for i := range dv.rows {
+		if dv.rows[i].kind != rowDiffPair {
+			continue
+		}
+		lastDiffRow = i
+		if dv.rowOrdinals[i] >= ordinal {
+			dv.moveCursorTo(i)
+			return
+		}
+	}
+
+	if lastDiffRow >= 0 {
+		dv.moveCursorTo(lastDiffRow)
+	}
 }
 
 // moveCursorToLineNum jumps to the first visible row associated with the given

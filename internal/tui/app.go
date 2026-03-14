@@ -291,9 +291,9 @@ func (m *Model) loadDiffWithSelection(preserveSelection string) tea.Cmd {
 func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int) tea.Cmd {
 	return func() tea.Msg {
 		var (
-			rawDiff      string
+			rawDiff       string
 			collapsedDirs []gitpkg.CollapsedDir
-			err          error
+			err           error
 		)
 		if m.config.UnstagedOnly {
 			rawDiff, collapsedDirs, err = m.git.DiffUnstaged()
@@ -1032,9 +1032,17 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case key.Matches(msg, keys.Down):
-		m.diffView.moveCursor(count)
+		if hasCount {
+			m.diffView.moveCursorByOrdinalDelta(count)
+		} else {
+			m.diffView.moveCursor(count)
+		}
 	case key.Matches(msg, keys.Up):
-		m.diffView.moveCursor(-count)
+		if hasCount {
+			m.diffView.moveCursorByOrdinalDelta(-count)
+		} else {
+			m.diffView.moveCursor(-count)
+		}
 	case key.Matches(msg, keys.ScreenTop):
 		m.diffView.moveCursorToViewportTop()
 	case key.Matches(msg, keys.ScreenBottom):
@@ -1613,9 +1621,17 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, keys.Down):
-		m.diffView.moveCursor(count)
+		if hasCount {
+			m.diffView.moveCursorByOrdinalDelta(count)
+		} else {
+			m.diffView.moveCursor(count)
+		}
 	case key.Matches(msg, keys.Up):
-		m.diffView.moveCursor(-count)
+		if hasCount {
+			m.diffView.moveCursorByOrdinalDelta(-count)
+		} else {
+			m.diffView.moveCursor(-count)
+		}
 	case key.Matches(msg, keys.ScreenTop):
 		m.diffView.moveCursorToViewportTop()
 	case key.Matches(msg, keys.ScreenBottom):

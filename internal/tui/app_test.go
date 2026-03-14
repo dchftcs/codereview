@@ -72,6 +72,53 @@ func TestUpdateNavigationChangesCursorAndFileSelection(t *testing.T) {
 	}
 }
 
+func TestCountPrefixedJKMovesByRelativeNumberDistanceAndKeepsAutoScroll(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModelWithFiles([]diff.FileDiff{*makeDuplicateLineNumDiff()})
+	m.diffView.height = 12
+	m.diffView.moveCursorToLineNum(1)
+
+	m = pressKey(m, keyRunes("2"))
+	m = pressKey(m, keyRunes("j"))
+	if got := m.diffView.currentLineNum(); got != 2 {
+		t.Fatalf("line after 2j = %d, want 2", got)
+	}
+	if row := m.diffView.rows[m.diffView.cursorY]; row.pair == nil || row.pair.Left != nil || row.pair.Right == nil {
+		t.Fatalf("2j should land on the second visible diff row for line 2, got left=%v right=%v", row.pair != nil && row.pair.Left != nil, row.pair != nil && row.pair.Right != nil)
+	}
+
+	m = pressKey(m, keyRunes("2"))
+	m = pressKey(m, keyRunes("k"))
+	if got := m.diffView.currentLineNum(); got != 1 {
+		t.Fatalf("line after 2k = %d, want 1", got)
+	}
+
+	targetLine := 15
+	m.diffView.setFile(makeLargeFileDiff(80), m.review)
+	m.diffView.moveCursorToLineNum(targetLine)
+	scrollBefore := m.diffView.scrollY
+
+	m = pressKey(m, keyRunes("5"))
+	m = pressKey(m, keyRunes("j"))
+	if got := m.diffView.currentLineNum(); got != targetLine+5 {
+		t.Fatalf("line after 5j = %d, want %d", got, targetLine+5)
+	}
+	if m.diffView.scrollY <= scrollBefore {
+		t.Fatalf("scrollY after 5j = %d, want > %d to preserve auto-scroll", m.diffView.scrollY, scrollBefore)
+	}
+
+	scrollBefore = m.diffView.scrollY
+	m = pressKey(m, keyRunes("3"))
+	m = pressKey(m, keyRunes("k"))
+	if got := m.diffView.currentLineNum(); got != targetLine+2 {
+		t.Fatalf("line after 3k = %d, want %d", got, targetLine+2)
+	}
+	if m.diffView.scrollY >= scrollBefore {
+		t.Fatalf("scrollY after 3k = %d, want < %d to preserve auto-scroll", m.diffView.scrollY, scrollBefore)
+	}
+}
+
 func TestArrowNavigationSkipsReadFilesButBracketNavigationDoesNot(t *testing.T) {
 	t.Parallel()
 

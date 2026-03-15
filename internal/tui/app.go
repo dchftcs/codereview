@@ -711,6 +711,8 @@ func (m *Model) applyExpandLoaded(msg expandLoadedMsg) {
 		return
 	}
 	m.expandedFiles = filterDiffFiles(msg.files, m.config.PathFilter)
+	// Clear stale fileState so the keep-position path is used.
+	delete(m.fileStates, m.currentStateKey())
 	m.setDiffViewForSelection(true)
 }
 
@@ -1253,6 +1255,10 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			break
 		}
+		// Clear stale fileState so setDiffViewForSelection uses the
+		// keep-position path instead of restoring old scroll/cursor
+		// indices that don't match the new expanded/collapsed rows.
+		delete(m.fileStates, m.currentStateKey())
 		m.expandedSet[idx] = !m.expandedSet[idx]
 		if m.expandedSet[idx] {
 			if m.expandedFiles != nil {
@@ -1551,7 +1557,7 @@ func (m Model) handleMouseDrag(x, y int) (tea.Model, tea.Cmd) {
 		m.diffView.selectionAnchor = m.mouseDrag.startRow
 		m.diffView.selectionActive = true
 	}
-	m.diffView.cursorY = row
+	m.diffView.setCursorNoScroll(row, +1)
 	return m, nil
 }
 

@@ -143,10 +143,78 @@ func (dv *diffView) showAbsolute() bool {
 	return dv.lineNums == lineNumBoth || dv.lineNums == lineNumAbsoluteOnly
 }
 
+// isSelectableRow returns true if the row kind is one the cursor should land on.
+func isSelectableRow(kind diffRowKind) bool {
+	return kind == rowDiffPair || kind == rowComment
+}
+
+// snapToSelectable finds the nearest selectable row starting from pos.
+// dir should be +1 (forward) or -1 (backward). If no selectable row exists
+// in that direction, it searches the opposite direction. Returns pos unchanged
+// if no rows exist.
+func (dv *diffView) snapToSelectable(pos, dir int) int {
+	if len(dv.rows) == 0 {
+		return pos
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= len(dv.rows) {
+		pos = len(dv.rows) - 1
+	}
+	if isSelectableRow(dv.rows[pos].kind) {
+		return pos
+	}
+	// Search in preferred direction.
+	for i := pos + dir; i >= 0 && i < len(dv.rows); i += dir {
+		if isSelectableRow(dv.rows[i].kind) {
+			return i
+		}
+	}
+	// Search opposite direction.
+	for i := pos - dir; i >= 0 && i < len(dv.rows); i -= dir {
+		if isSelectableRow(dv.rows[i].kind) {
+			return i
+		}
+	}
+	return pos
+}
+
+// setCursor sets the cursor to the given row, snapping to the nearest
+// selectable row in the given direction, and scrolls to keep it visible.
+func (dv *diffView) setCursor(row, dir int) {
+	if len(dv.rows) == 0 {
+		return
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(dv.rows) {
+		row = len(dv.rows) - 1
+	}
+	dv.cursorY = dv.snapToSelectable(row, dir)
+	dv.scrollCursorIntoMargin()
+}
+
+// setCursorNoScroll sets the cursor to the given row, snapping to the nearest
+// selectable row in the given direction, without adjusting scroll position.
+func (dv *diffView) setCursorNoScroll(row, dir int) {
+	if len(dv.rows) == 0 {
+		return
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(dv.rows) {
+		row = len(dv.rows) - 1
+	}
+	dv.cursorY = dv.snapToSelectable(row, dir)
+}
+
 // relativeNumStr returns a 3-char right-aligned relative row number string.
-// The cursor row shows "  0", spacers show "   ", others show distance.
+// The cursor row shows "  0", spacers and hunk headers show "   ", others show distance.
 func (dv *diffView) relativeNumStr(rowIdx int) string {
-	if rowIdx >= 0 && rowIdx < len(dv.rows) && dv.rows[rowIdx].kind == rowSpacer {
+	if rowIdx >= 0 && rowIdx < len(dv.rows) && !isSelectableRow(dv.rows[rowIdx].kind) {
 		return "   "
 	}
 	if rowIdx == dv.cursorY {
@@ -173,6 +241,7 @@ func (dv *diffView) setFile(f *diff.FileDiff, rev *review.Review) {
 	dv.cursorY = 0
 	dv.resetRenderCaches()
 	dv.buildRows()
+	dv.setCursorNoScroll(0, +1)
 }
 
 // setFileKeepPosition switches the file data but keeps the cursor on the same
@@ -395,15 +464,11 @@ func (dv *diffView) moveCursor(n int) {
 	if len(dv.rows) == 0 {
 		return
 	}
-	dv.cursorY += n
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
+	dir := +1
+	if n < 0 {
+		dir = -1
 	}
-	maxCursor := len(dv.rows) - 1
-	if dv.cursorY > maxCursor {
-		dv.cursorY = maxCursor
-	}
-	dv.scrollCursorIntoMargin()
+	dv.setCursor(dv.cursorY+n, dir)
 }
 
 // moveCursorByOrdinalDelta moves relative to the diff-row ordinals used by the
@@ -457,18 +522,7 @@ func (dv *diffView) scrollByRows(n int) {
 		accum += dv.screenLinesForRow(i)
 	}
 
-	maxCursor := len(dv.rows) - 1
-	if maxCursor < 0 {
-		maxCursor = 0
-	}
-	if dv.cursorY > maxCursor {
-		dv.cursorY = maxCursor
-	}
-
-	viewportHeight := dv.contentViewportHeight()
-	if viewportHeight <= 0 {
-		return
-	}
+	// Clamp cursor to visible viewport.
 	if dv.cursorY < dv.scrollY {
 		dv.cursorY = dv.scrollY
 	}
@@ -476,6 +530,11 @@ func (dv *diffView) scrollByRows(n int) {
 	if dv.cursorY > last {
 		dv.cursorY = last
 	}
+	dir := +1
+	if n < 0 {
+		dir = -1
+	}
+	dv.setCursorNoScroll(dv.cursorY, dir)
 }
 
 // windowScrollByRows scrolls the viewport by row count without anchoring
@@ -545,31 +604,16 @@ func (dv *diffView) windowScrollByRows(n int) {
 	if dv.cursorY > bottomBoundary {
 		dv.cursorY = bottomBoundary
 	}
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
+	dir := +1
+	if n < 0 {
+		dir = -1
 	}
-	maxCursor := len(dv.rows) - 1
-	if maxCursor < 0 {
-		maxCursor = 0
-	}
-	if dv.cursorY > maxCursor {
-		dv.cursorY = maxCursor
-	}
+	dv.setCursorNoScroll(dv.cursorY, dir)
 }
 
 // moveCursorTo sets the cursor to an absolute row index.
 func (dv *diffView) moveCursorTo(row int) {
-	if len(dv.rows) == 0 {
-		return
-	}
-	dv.cursorY = row
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
-	}
-	if dv.cursorY >= len(dv.rows) {
-		dv.cursorY = len(dv.rows) - 1
-	}
-	dv.scrollCursorIntoMargin()
+	dv.setCursor(row, +1)
 }
 
 // moveCursorToViewportTop moves the cursor to the top visible row.
@@ -578,16 +622,10 @@ func (dv *diffView) moveCursorToViewportTop() {
 		return
 	}
 	if len(dv.visibleRowMap) > 0 {
-		dv.cursorY = dv.visibleRowMap[0]
+		dv.setCursorNoScroll(dv.visibleRowMap[0], +1)
 		return
 	}
-	dv.cursorY = dv.scrollY
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
-	}
-	if dv.cursorY >= len(dv.rows) {
-		dv.cursorY = len(dv.rows) - 1
-	}
+	dv.setCursorNoScroll(dv.scrollY, +1)
 }
 
 // moveCursorToViewportBottom moves the cursor to the bottom visible row.
@@ -596,20 +634,14 @@ func (dv *diffView) moveCursorToViewportBottom() {
 		return
 	}
 	if n := len(dv.visibleRowMap); n > 0 {
-		dv.cursorY = dv.visibleRowMap[n-1]
+		dv.setCursorNoScroll(dv.visibleRowMap[n-1], -1)
 		return
 	}
 	viewportHeight := dv.contentViewportHeight()
 	if viewportHeight <= 0 {
 		viewportHeight = 1
 	}
-	dv.cursorY = dv.scrollY + viewportHeight - 1
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
-	}
-	if dv.cursorY >= len(dv.rows) {
-		dv.cursorY = len(dv.rows) - 1
-	}
+	dv.setCursorNoScroll(dv.scrollY+viewportHeight-1, -1)
 }
 
 // findMatches returns row indices whose line content matches the search term (case-insensitive).
@@ -652,19 +684,10 @@ func (dv *diffView) findMatches(term string) []int {
 // and moves the cursor there.
 func (dv *diffView) clickAt(y int) {
 	if y >= 0 && y < len(dv.visibleRowMap) {
-		dv.cursorY = dv.visibleRowMap[y]
+		dv.setCursorNoScroll(dv.visibleRowMap[y], +1)
 		return
 	}
-	row := dv.scrollY + y
-	if row < 0 {
-		row = 0
-	}
-	if row >= len(dv.rows) {
-		row = len(dv.rows) - 1
-	}
-	if row >= 0 {
-		dv.cursorY = row
-	}
+	dv.setCursorNoScroll(dv.scrollY+y, +1)
 }
 
 func (dv *diffView) commentAtScreenY(y int) *review.Comment {
@@ -687,18 +710,8 @@ func (dv *diffView) clampScroll() {
 	if dv.scrollY > maxScroll {
 		dv.scrollY = maxScroll
 	}
-	// Keep cursor in bounds
-	maxCursor := len(dv.rows) - 1
-	if maxCursor < 0 {
-		maxCursor = 0
-	}
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
-	}
-	if dv.cursorY > maxCursor {
-		dv.cursorY = maxCursor
-	}
-	dv.scrollCursorIntoMargin()
+	// Keep cursor in bounds and snap to selectable row.
+	dv.setCursor(dv.cursorY, +1)
 }
 
 func (dv *diffView) clampKeepPosition() {
@@ -713,16 +726,7 @@ func (dv *diffView) clampKeepPosition() {
 		dv.scrollY = maxScroll
 	}
 
-	maxCursor := len(dv.rows) - 1
-	if maxCursor < 0 {
-		maxCursor = 0
-	}
-	if dv.cursorY < 0 {
-		dv.cursorY = 0
-	}
-	if dv.cursorY > maxCursor {
-		dv.cursorY = maxCursor
-	}
+	dv.setCursorNoScroll(dv.cursorY, +1)
 
 	viewportHeight := dv.contentViewportHeight()
 	if viewportHeight <= 0 {

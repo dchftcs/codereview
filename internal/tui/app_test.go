@@ -43,8 +43,10 @@ func TestUpdateNavigationChangesCursorAndFileSelection(t *testing.T) {
 
 	m = pressKey(m, keyRunes("g"))
 	m = pressKey(m, keyRunes("g"))
-	if m.diffView.cursorY != 0 {
-		t.Fatalf("cursor after gg = %d, want 0", m.diffView.cursorY)
+	// Row 0 is a hunk header (not selectable), so gg lands on the first
+	// selectable row (the first diff pair).
+	if m.diffView.cursorY != 1 {
+		t.Fatalf("cursor after gg = %d, want 1", m.diffView.cursorY)
 	}
 
 	m = pressKey(m, keyRunes("G"))

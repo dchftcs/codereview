@@ -2042,8 +2042,9 @@ func (m *Model) jumpToNextFileMatch(dir int) bool {
 		}
 		// Found a file with matches — switch to it.
 		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
-		m.fileList.selected = nextIdx
-		m.fileList.ensureVisible()
+		path := m.fileList.filePathForIndex(nextIdx)
+		m.fileList.selectTreePath(path)
+		m.fileList.ensureTreeVisible()
 		m.setDiffViewForSelection(false)
 
 		matches := m.diffView.findMatches(m.searchTerm)

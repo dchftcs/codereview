@@ -155,6 +155,67 @@ func TestArrowNavigationSkipsReadFilesButBracketNavigationDoesNot(t *testing.T) 
 	}
 }
 
+func TestContentSearchNextJumpsToNextMatchingFile(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModelWithFiles([]diff.FileDiff{
+		{
+			OldName: "a.go",
+			NewName: "a.go",
+			Hunks: []diff.Hunk{{
+				OldStart: 1,
+				OldCount: 2,
+				NewStart: 1,
+				NewCount: 2,
+				Lines: []diff.DiffLine{
+					{Op: diff.OpEqual, Content: "other", OldNum: 1, NewNum: 1},
+					{Op: diff.OpEqual, Content: "target", OldNum: 2, NewNum: 2},
+				},
+				Pairs: []diff.LinePair{
+					{Left: &diff.DiffLine{Op: diff.OpEqual, Content: "other", OldNum: 1, NewNum: 1}, Right: &diff.DiffLine{Op: diff.OpEqual, Content: "other", OldNum: 1, NewNum: 1}},
+					{Left: &diff.DiffLine{Op: diff.OpEqual, Content: "target", OldNum: 2, NewNum: 2}, Right: &diff.DiffLine{Op: diff.OpEqual, Content: "target", OldNum: 2, NewNum: 2}},
+				},
+			}},
+		},
+		{
+			OldName: "b.go",
+			NewName: "b.go",
+			Hunks: []diff.Hunk{{
+				OldStart: 1,
+				OldCount: 1,
+				NewStart: 1,
+				NewCount: 1,
+				Lines: []diff.DiffLine{
+					{Op: diff.OpEqual, Content: "target again", OldNum: 1, NewNum: 1},
+				},
+				Pairs: []diff.LinePair{
+					{Left: &diff.DiffLine{Op: diff.OpEqual, Content: "target again", OldNum: 1, NewNum: 1}, Right: &diff.DiffLine{Op: diff.OpEqual, Content: "target again", OldNum: 1, NewNum: 1}},
+				},
+			}},
+		},
+	})
+
+	m = pressKey(m, keyRunes("p"))
+	m = typeText(m, "target")
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := m.fileList.selectedDiffPath(); got != "a.go" {
+		t.Fatalf("selected file after initial content search = %q, want a.go", got)
+	}
+
+	m = pressKey(m, keyRunes("n"))
+
+	if got := m.fileList.selectedDiffPath(); got != "b.go" {
+		t.Fatalf("selected file after next match = %q, want b.go", got)
+	}
+	if got := m.diffView.file.NewName; got != "b.go" {
+		t.Fatalf("diff view file after next match = %q, want b.go", got)
+	}
+	if len(m.searchMatches) == 0 {
+		t.Fatal("expected search matches in b.go after cross-file jump")
+	}
+}
+
 func TestFileListContextMenuMarkReadUnread(t *testing.T) {
 	t.Parallel()
 

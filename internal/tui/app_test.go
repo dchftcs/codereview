@@ -10,6 +10,49 @@ import (
 	"github.com/dc/codereview/internal/diff"
 )
 
+func TestBuildEditorLaunchCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		editor string
+		file   string
+		line   int
+		want   string
+	}{
+		{
+			name:   "vim uses +line",
+			editor: "vim",
+			file:   "/tmp/example.go",
+			line:   17,
+			want:   "vim +17 '/tmp/example.go'",
+		},
+		{
+			name:   "vscode uses goto",
+			editor: "code -w",
+			file:   "/tmp/example.go",
+			line:   17,
+			want:   "code -w --goto '/tmp/example.go':17",
+		},
+		{
+			name:   "unknown editor falls back to file open",
+			editor: "zed-nightly",
+			file:   "/tmp/example.go",
+			line:   17,
+			want:   "zed-nightly '/tmp/example.go'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildEditorLaunchCommand(tt.editor, tt.file, tt.line); got != tt.want {
+				t.Fatalf("buildEditorLaunchCommand(%q, %q, %d) = %q, want %q", tt.editor, tt.file, tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUpdateNavigationChangesCursorAndFileSelection(t *testing.T) {
 	t.Parallel()
 

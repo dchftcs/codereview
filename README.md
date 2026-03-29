@@ -58,7 +58,7 @@ If an argument could be interpreted as either a git revision and a path, `cr` pr
 | `R` | Edit general comment (review-level) |
 | `Enter` | Insert newline in comment |
 | `Ctrl+s` | Submit comment |
-| `Ctrl+g` | Open `$EDITOR` for comment |
+| `Ctrl+g` | Open `$EDITOR` at the current file/line, or open the comment buffer while editing a comment |
 | `Esc` | Cancel comment |
 | `d` | Delete comment at cursor line |
 | `E` | Edit comment at cursor line |

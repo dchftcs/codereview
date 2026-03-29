@@ -382,6 +382,10 @@ type editorFinishedMsg struct {
 	err     error
 }
 
+type externalEditorFinishedMsg struct {
+	err error
+}
+
 // editorCmd returns the user's preferred editor command.
 func editorCmd() string {
 	if e := os.Getenv("EDITOR"); e != "" {
@@ -391,6 +395,41 @@ func editorCmd() string {
 		return e
 	}
 	return "vi"
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func editorProgramName(editor string) string {
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
+}
+
+func buildEditorLaunchCommand(editor, file string, line int) string {
+	if line < 1 {
+		line = 1
+	}
+	quotedFile := shellQuote(file)
+	switch editorProgramName(editor) {
+	case "vi", "vim", "nvim", "view", "gvim", "mvim", "vimdiff", "emacs", "emacsclient":
+		return fmt.Sprintf("%s +%d %s", editor, line, quotedFile)
+	case "code", "code-insiders", "cursor", "windsurf", "codium":
+		return fmt.Sprintf("%s --goto %s:%d", editor, quotedFile, line)
+	case "subl", "sublime_text", "zed", "hx", "helix":
+		return fmt.Sprintf("%s %s:%d", editor, quotedFile, line)
+	case "mate":
+		return fmt.Sprintf("%s -l %d %s", editor, line, quotedFile)
+	default:
+		return fmt.Sprintf("%s %s", editor, quotedFile)
+	}
+}
+
+func openEditorCommand(editor, file string, line int) *exec.Cmd {
+	return exec.Command("sh", "-lc", buildEditorLaunchCommand(editor, file, line))
 }
 
 func (m Model) loadExpandedDiff() tea.Cmd {
@@ -554,6 +593,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffView.deactivateComment()
 		}
 		m.mode = modeNormal
+		return m, nil
+
+	case externalEditorFinishedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -934,6 +979,39 @@ func (m *Model) currentReviewFileName() (string, bool) {
 	return path, ok
 }
 
+func (m *Model) currentEditorTarget() (string, int, bool, error) {
+	f, err := m.selectedDisplayFile()
+	if err != nil {
+		return "", 0, false, err
+	}
+	if f == nil {
+		return "", 0, false, nil
+	}
+
+	line := m.diffView.currentLineNum()
+	if line < 1 {
+		line = 1
+	}
+
+	candidates := make([]string, 0, 2)
+	if f.NewName != "" && f.NewName != "/dev/null" {
+		candidates = append(candidates, f.NewName)
+	}
+	if f.OldName != "" && f.OldName != "/dev/null" && f.OldName != f.NewName {
+		candidates = append(candidates, f.OldName)
+	}
+
+	for _, relPath := range candidates {
+		absPath := filepath.Join(m.fileList.repoRoot, filepath.FromSlash(relPath))
+		info, statErr := os.Stat(absPath)
+		if statErr == nil && !info.IsDir() {
+			return absPath, line, true, nil
+		}
+	}
+
+	return "", line, false, nil
+}
+
 func (m *Model) canToggleStage() bool {
 	if m.config.UnstagedOnly {
 		return true
@@ -964,6 +1042,24 @@ func (m Model) toggleStageForPath(path string, staged bool) tea.Cmd {
 			err:               err,
 		}
 	}
+}
+
+func (m Model) openCurrentSelectionInEditor() (tea.Model, tea.Cmd) {
+	file, line, ok, err := m.currentEditorTarget()
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	if !ok {
+		m.statusMsg = "Selected file is not available in the working tree"
+		return m, nil
+	}
+
+	editor := editorCmd()
+	c := openEditorCommand(editor, file, line)
+	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+		return externalEditorFinishedMsg{err: err}
+	})
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1194,6 +1290,9 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, keys.GeneralComment):
 		return m.openGeneralCommentEditor()
+
+	case key.Matches(msg, keys.OpenEditor):
+		return m.openCurrentSelectionInEditor()
 
 	case key.Matches(msg, keys.DeleteComment):
 		file, ok := m.currentReviewFileName()
@@ -1710,7 +1809,7 @@ func (m Model) updateComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		tmpFile.Close()
 		editor := editorCmd()
-		c := exec.Command(editor, tmpFile.Name())
+		c := openEditorCommand(editor, tmpFile.Name(), 1)
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			return editorFinishedMsg{tmpFile: tmpFile.Name(), err: err}
 		})
@@ -1766,7 +1865,7 @@ func (m Model) updateGeneralComment(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		tmpFile.Close()
 		editor := editorCmd()
-		c := exec.Command(editor, tmpFile.Name())
+		c := openEditorCommand(editor, tmpFile.Name(), 1)
 		return m, tea.ExecProcess(c, func(err error) tea.Msg {
 			return generalEditorFinishedMsg{tmpFile: tmpFile.Name(), err: err}
 		})
@@ -2114,7 +2213,7 @@ func (m Model) helpView() string {
 		{"j/k, d, E", "When panel focused: nav/delete/edit"},
 		{"Ctrl+s", "Submit comment"},
 		{"Enter", "Newline in comment"},
-		{"Ctrl+g", "Open $EDITOR for comment"},
+		{"Ctrl+g", "Open $EDITOR at current file/line or comment"},
 		{"Esc", "Cancel comment"},
 		{"d", "Delete comment at cursor"},
 		{"E", "Edit comment at cursor"},

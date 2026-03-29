@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dc/codereview/internal/diff"
+	"github.com/dc/codereview/internal/git"
 	"github.com/dc/codereview/internal/review"
 )
 
@@ -386,32 +386,22 @@ func (fl *fileList) search(term string) (bool, error) {
 		return false, nil
 	}
 
+	gitFiles, gitErr := git.ListFiles()
+	if gitErr != nil {
+		return false, gitErr
+	}
 	var matched string
 	bestScore := -1
-	walkErr := filepath.WalkDir(fl.repoRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() && d.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		rel, relErr := filepath.Rel(fl.repoRoot, path)
-		if relErr != nil || rel == "." {
-			return nil
-		}
+	for _, rel := range gitFiles {
 		rel = filepath.ToSlash(rel)
 		score := fileSearchScore(rel, needle)
 		if score < 0 {
-			return nil
+			continue
 		}
 		if bestScore < 0 || score < bestScore || (score == bestScore && rel < matched) {
 			bestScore = score
 			matched = rel
 		}
-		return nil
-	})
-	if walkErr != nil {
-		return false, walkErr
 	}
 	if matched == "" {
 		return false, nil
@@ -420,103 +410,6 @@ func (fl *fileList) search(term string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func (fl *fileList) searchContent(term string) (string, bool, error) {
-	needle := strings.ToLower(strings.TrimSpace(term))
-	if needle == "" {
-		return "", false, nil
-	}
-
-	start := fl.selected
-	if _, idx, ok := fl.modifiedSelection(); ok {
-		start = idx
-	}
-	if len(fl.files) > 0 {
-		for off := 1; off <= len(fl.files); off++ {
-			idx := (start + off) % len(fl.files)
-			path := fl.filePathForIndex(idx)
-			if path == "" {
-				continue
-			}
-			ok, err := fileContains(filepath.Join(fl.repoRoot, filepath.FromSlash(path)), needle)
-			if err != nil {
-				return "", false, err
-			}
-			if ok {
-				return path, true, nil
-			}
-		}
-	}
-
-	var matched string
-	err := filepath.WalkDir(fl.repoRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, relErr := filepath.Rel(fl.repoRoot, path)
-		if relErr != nil || rel == "." {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		ok, containsErr := fileContains(path, needle)
-		if containsErr != nil {
-			return containsErr
-		}
-		if ok {
-			matched = rel
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if err != nil && err != fs.SkipAll {
-		return "", false, err
-	}
-	if matched == "" {
-		return "", false, nil
-	}
-	return matched, true, nil
-}
-
-const maxContentSearchBytes = 2 << 20 // 2MB
-
-func fileContains(path, needle string) (bool, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if info.IsDir() || info.Size() > maxContentSearchBytes {
-		return false, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if bytesContainsZero(data) {
-		return false, nil
-	}
-	return strings.Contains(strings.ToLower(string(data)), needle), nil
-}
-
-func bytesContainsZero(b []byte) bool {
-	for _, v := range b {
-		if v == 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func (fl *fileList) focusPath(path string) error {

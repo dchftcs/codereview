@@ -130,27 +130,26 @@ func TestModifiedJumpsInTreeMode(t *testing.T) {
 	}
 }
 
-func TestSearchContentFindsModifiedFirst(t *testing.T) {
+func TestFileDiffContainsSearchesDiffHunks(t *testing.T) {
 	t.Parallel()
 
-	tmp := t.TempDir()
-	mustWriteFile(t, filepath.Join(tmp, "a.txt"), "alpha\nneedle\n")
-	mustWriteFile(t, filepath.Join(tmp, "b.txt"), "needle\n")
-
-	fl := newFileList([]diff.FileDiff{
-		{NewName: "a.txt"},
-	})
-	fl.repoRoot = tmp
-
-	path, found, err := fl.searchContent("needle")
-	if err != nil {
-		t.Fatalf("searchContent returned error: %v", err)
+	f := &diff.FileDiff{
+		NewName: "a.txt",
+		Hunks: []diff.Hunk{{
+			Lines: []diff.DiffLine{
+				{Op: diff.OpEqual, Content: "alpha"},
+				{Op: diff.OpInsert, Content: "needle in haystack"},
+			},
+		}},
 	}
-	if !found {
-		t.Fatal("searchContent did not find match")
+	if !fileDiffContains(f, "needle") {
+		t.Fatal("fileDiffContains should find 'needle' in hunk lines")
 	}
-	if path != "a.txt" {
-		t.Fatalf("searchContent path = %q, want %q", path, "a.txt")
+	if fileDiffContains(f, "missing") {
+		t.Fatal("fileDiffContains should not find 'missing'")
+	}
+	if fileDiffContains(f, "Needle") {
+		t.Fatal("fileDiffContains should be case-sensitive")
 	}
 }
 

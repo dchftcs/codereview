@@ -644,12 +644,23 @@ func (dv *diffView) moveCursorToViewportBottom() {
 	dv.setCursorNoScroll(dv.scrollY+viewportHeight-1, -1)
 }
 
-// findMatches returns row indices whose line content matches the search term (case-insensitive).
+// fileDiffContains reports whether any hunk line in f contains term.
+func fileDiffContains(f *diff.FileDiff, term string) bool {
+	for i := range f.Hunks {
+		for _, dl := range f.Hunks[i].Lines {
+			if strings.Contains(dl.Content, term) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findMatches returns row indices whose line content matches the search term (case-sensitive).
 func (dv *diffView) findMatches(term string) []int {
 	if term == "" {
 		return nil
 	}
-	lower := strings.ToLower(term)
 	var matches []int
 	for i, row := range dv.rows {
 		switch row.kind {
@@ -664,15 +675,15 @@ func (dv *diffView) findMatches(term string) []int {
 			if row.pair.Right != nil {
 				content += " " + row.pair.Right.Content
 			}
-			if strings.Contains(strings.ToLower(content), lower) {
+			if strings.Contains(content, term) {
 				matches = append(matches, i)
 			}
 		case rowHunkHeader:
-			if strings.Contains(strings.ToLower(row.hunk), lower) {
+			if strings.Contains(row.hunk, term) {
 				matches = append(matches, i)
 			}
 		case rowComment:
-			if row.comment != nil && strings.Contains(strings.ToLower(row.comment.Text), lower) {
+			if row.comment != nil && strings.Contains(row.comment.Text, term) {
 				matches = append(matches, i)
 			}
 		}

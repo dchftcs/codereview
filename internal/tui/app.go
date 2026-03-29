@@ -1890,21 +1890,17 @@ func (m Model) updateContentSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		m.bottomBar.deactivate()
 		if term != "" {
-			m.fileStates[m.currentStateKey()] = m.diffView.saveState()
-			path, found, err := m.fileList.searchContent(term)
-			if err != nil {
-				m.err = err
-				return m, nil
-			}
-			if found {
-				if err := m.fileList.focusPath(path); err != nil {
-					m.err = err
-					return m, nil
-				}
-				m.setDiffViewForSelection(false)
-				if matches := m.diffView.findMatches(term); len(matches) > 0 {
-					m.diffView.moveCursorTo(matches[0])
-				}
+			// Search diff hunks across files, starting from current.
+			m.searchTerm = term
+			// First check current file.
+			m.searchMatches = m.diffView.findMatches(term)
+			if len(m.searchMatches) > 0 {
+				m.searchIdx = 0
+				m.jumpToNextMatch(1)
+			} else {
+				// Try other files.
+				m.fileStates[m.currentStateKey()] = m.diffView.saveState()
+				m.jumpToNextFileMatch(1)
 			}
 		}
 		return m, nil
@@ -1978,32 +1974,90 @@ func (m Model) doSaveAndQuit() (tea.Model, tea.Cmd) {
 }
 
 // jumpToNextMatch moves the cursor to the next (dir=1) or previous (dir=-1) search match.
+// Recomputes matches from current rows each time so that expand/collapse or
+// comment changes don't cause jumps to stale row indices. When no more matches
+// exist in the current file, jumps to the next/previous file containing the term.
 func (m *Model) jumpToNextMatch(dir int) {
-	if len(m.searchMatches) == 0 {
+	if m.searchTerm == "" {
 		return
 	}
+	matches := m.diffView.findMatches(m.searchTerm)
+	m.searchMatches = matches
 	cursor := m.diffView.cursorY
+
 	if dir > 0 {
-		// Find next match after cursor
-		for _, idx := range m.searchMatches {
+		// Try to find next match after cursor in current file.
+		for _, idx := range matches {
 			if idx > cursor {
 				m.diffView.moveCursorTo(idx)
 				return
 			}
 		}
-		// Wrap around
-		m.diffView.moveCursorTo(m.searchMatches[0])
+		// No more forward matches in this file — jump to next file.
+		if m.jumpToNextFileMatch(dir) {
+			return
+		}
+		// Wrapped back to current file — go to first match.
+		if len(matches) > 0 {
+			m.diffView.moveCursorTo(matches[0])
+		}
 	} else {
-		// Find previous match before cursor
-		for i := len(m.searchMatches) - 1; i >= 0; i-- {
-			if m.searchMatches[i] < cursor {
-				m.diffView.moveCursorTo(m.searchMatches[i])
+		// Try to find previous match before cursor in current file.
+		for i := len(matches) - 1; i >= 0; i-- {
+			if matches[i] < cursor {
+				m.diffView.moveCursorTo(matches[i])
 				return
 			}
 		}
-		// Wrap around
-		m.diffView.moveCursorTo(m.searchMatches[len(m.searchMatches)-1])
+		// No more backward matches in this file — jump to previous file.
+		if m.jumpToNextFileMatch(dir) {
+			return
+		}
+		// Wrapped back to current file — go to last match.
+		if len(matches) > 0 {
+			m.diffView.moveCursorTo(matches[len(matches)-1])
+		}
 	}
+}
+
+// jumpToNextFileMatch finds the next (dir=1) or previous (dir=-1) diff file
+// whose hunks contain the search term, switches to it, and moves the cursor
+// to the first (dir=1) or last (dir=-1) match row. Returns true if it jumped.
+func (m *Model) jumpToNextFileMatch(dir int) bool {
+	_, curIdx, ok := m.fileList.modifiedSelection()
+	if !ok {
+		return false
+	}
+	n := len(m.fileList.files)
+	for off := 1; off < n; off++ {
+		var nextIdx int
+		if dir > 0 {
+			nextIdx = (curIdx + off) % n
+		} else {
+			nextIdx = (curIdx - off%n + n) % n
+		}
+		f := displayFileAtIndex(m.fileList.files, nextIdx, m.expandedSet, m.expandedFiles)
+		if f == nil || !fileDiffContains(f, m.searchTerm) {
+			continue
+		}
+		// Found a file with matches — switch to it.
+		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
+		m.fileList.selected = nextIdx
+		m.fileList.ensureVisible()
+		m.setDiffViewForSelection(false)
+
+		matches := m.diffView.findMatches(m.searchTerm)
+		m.searchMatches = matches
+		if len(matches) > 0 {
+			if dir > 0 {
+				m.diffView.moveCursorTo(matches[0])
+			} else {
+				m.diffView.moveCursorTo(matches[len(matches)-1])
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

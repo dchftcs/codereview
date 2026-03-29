@@ -229,6 +229,25 @@ func DefaultBranch() string {
 	return "main"
 }
 
+// ListFiles returns all tracked files plus untracked non-ignored files
+// (relative to repo root). This is equivalent to `git ls-files --cached --others --exclude-standard`.
+func ListFiles() ([]string, error) {
+	out, err := runNoLock("ls-files", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var files []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		files = append(files, l)
+	}
+	return files, nil
+}
+
 // UntrackedFiles returns untracked file paths (relative to repo root).
 func UntrackedFiles() ([]string, error) {
 	out, err := runNoLock("ls-files", "--others", "--exclude-standard")

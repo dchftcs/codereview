@@ -626,6 +626,29 @@ func makeLargeFileDiff(lines int) *diff.FileDiff {
 	}
 }
 
+func makeWrappedLargeFileDiff(lines int) *diff.FileDiff {
+	pairs := make([]diff.LinePair, 0, lines)
+	content := strings.Repeat("wrapped-content-", 10)
+	for i := 1; i <= lines; i++ {
+		line := fmt.Sprintf("%03d %s", i, content)
+		pairs = append(pairs, diff.LinePair{
+			Left:  &diff.DiffLine{Op: diff.OpEqual, Content: line, OldNum: i, NewNum: i},
+			Right: &diff.DiffLine{Op: diff.OpEqual, Content: line, OldNum: i, NewNum: i},
+		})
+	}
+	return &diff.FileDiff{
+		OldName: "x.go",
+		NewName: "x.go",
+		Hunks: []diff.Hunk{{
+			OldStart: 1,
+			OldCount: lines,
+			NewStart: 1,
+			NewCount: lines,
+			Pairs:    pairs,
+		}},
+	}
+}
+
 func makeDuplicateLineNumDiff() *diff.FileDiff {
 	return &diff.FileDiff{
 		OldName: "x.go",

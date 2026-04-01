@@ -537,78 +537,145 @@ func (dv *diffView) scrollByRows(n int) {
 	dv.setCursorNoScroll(dv.cursorY, dir)
 }
 
-// windowScrollByRows scrolls the viewport by row count without anchoring
-// movement to the cursor position. Uses screen-line-aware boundaries.
-func (dv *diffView) windowScrollByRows(n int) {
+// windowScrollByScreenLines scrolls the viewport by a screen-line count
+// without anchoring movement to the cursor position. This keeps forward and
+// reverse paging symmetric even when wrapped rows change the logical-row
+// count visible in the viewport.
+func (dv *diffView) windowScrollByScreenLines(n int) {
 	if len(dv.rows) == 0 || n == 0 {
 		return
 	}
-	dv.scrollY += n
+
+	origScrollY := dv.scrollY
+	cursorScreenOffset := dv.screenLinesInRange(dv.scrollY, dv.cursorY)
+
+	if n > 0 {
+		accum := 0
+		next := dv.scrollY
+		for next < len(dv.rows) && accum < n {
+			accum += dv.screenLinesForRow(next)
+			next++
+		}
+		dv.scrollY = next
+	} else {
+		target := -n
+		accum := 0
+		prev := dv.scrollY
+		for prev > 0 && accum < target {
+			prev--
+			accum += dv.screenLinesForRow(prev)
+		}
+		dv.scrollY = prev
+	}
+
 	if dv.scrollY < 0 {
 		dv.scrollY = 0
 	}
-	maxScroll := len(dv.rows) - 1
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := dv.maxWindowScrollY()
 	if dv.scrollY > maxScroll {
 		dv.scrollY = maxScroll
 	}
-
-	viewportHeight := dv.contentViewportHeight()
-	if viewportHeight <= 0 {
+	if dv.scrollY == origScrollY {
 		return
 	}
 
-	margin := scrollMarginLines
-	maxMargin := (viewportHeight - 1) / 2
-	if margin > maxMargin {
-		margin = maxMargin
+	last := dv.lastVisibleRow()
+	target := dv.rowAtScreenOffset(dv.scrollY, cursorScreenOffset)
+	if target < dv.scrollY {
+		target = dv.scrollY
 	}
-	if margin < 0 {
-		margin = 0
-	}
-
-	// Find top boundary: first row whose top edge is at or past the margin.
-	topBoundary := dv.scrollY
-	accum := 0
-	for i := dv.scrollY; i < len(dv.rows); i++ {
-		if accum >= margin {
-			topBoundary = i
-			break
-		}
-		topBoundary = i
-		accum += dv.screenLinesForRow(i)
-	}
-
-	// Find bottom boundary: last row whose bottom edge fits within viewport - margin.
-	bottomBoundary := dv.scrollY
-	accum = 0
-	for i := dv.scrollY; i < len(dv.rows); i++ {
-		rowH := dv.screenLinesForRow(i)
-		if accum+rowH > viewportHeight-margin {
-			break
-		}
-		bottomBoundary = i
-		accum += rowH
-	}
-
-	if bottomBoundary < topBoundary {
-		topBoundary = dv.scrollY
-		bottomBoundary = dv.lastVisibleRow()
-	}
-
-	if dv.cursorY < topBoundary {
-		dv.cursorY = topBoundary
-	}
-	if dv.cursorY > bottomBoundary {
-		dv.cursorY = bottomBoundary
+	if target > last {
+		target = last
 	}
 	dir := +1
 	if n < 0 {
 		dir = -1
 	}
-	dv.setCursorNoScroll(dv.cursorY, dir)
+	dv.cursorY = dv.snapToSelectableInRange(target, dir, dv.scrollY, last)
+}
+
+// maxWindowScrollY returns the last top row that can still show a full
+// viewport of content. Window paging should clamp here so paging up from EOF
+// uses the viewport height instead of a shortened tail.
+func (dv *diffView) maxWindowScrollY() int {
+	if len(dv.rows) == 0 {
+		return 0
+	}
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
+		return 0
+	}
+
+	accum := 0
+	top := len(dv.rows)
+	for top > 0 && accum < viewportHeight {
+		top--
+		accum += dv.screenLinesForRow(top)
+	}
+	if accum < viewportHeight {
+		return 0
+	}
+	return top
+}
+
+func (dv *diffView) rowAtScreenOffset(startRow, screenOffset int) int {
+	if len(dv.rows) == 0 {
+		return 0
+	}
+	if startRow < 0 {
+		startRow = 0
+	}
+	if startRow >= len(dv.rows) {
+		startRow = len(dv.rows) - 1
+	}
+	if screenOffset <= 0 {
+		return startRow
+	}
+
+	accum := 0
+	for i := startRow; i < len(dv.rows); i++ {
+		rowH := dv.screenLinesForRow(i)
+		if accum+rowH > screenOffset {
+			return i
+		}
+		accum += rowH
+	}
+	return len(dv.rows) - 1
+}
+
+func (dv *diffView) snapToSelectableInRange(pos, dir, minRow, maxRow int) int {
+	if len(dv.rows) == 0 {
+		return pos
+	}
+	if minRow < 0 {
+		minRow = 0
+	}
+	if maxRow >= len(dv.rows) {
+		maxRow = len(dv.rows) - 1
+	}
+	if maxRow < minRow {
+		return dv.snapToSelectable(pos, dir)
+	}
+	if pos < minRow {
+		pos = minRow
+	}
+	if pos > maxRow {
+		pos = maxRow
+	}
+	if isSelectableRow(dv.rows[pos].kind) {
+		return pos
+	}
+	for i := pos + dir; i >= minRow && i <= maxRow; i += dir {
+		if isSelectableRow(dv.rows[i].kind) {
+			return i
+		}
+	}
+	for i := pos - dir; i >= minRow && i <= maxRow; i -= dir {
+		if isSelectableRow(dv.rows[i].kind) {
+			return i
+		}
+	}
+	return pos
 }
 
 // moveCursorTo sets the cursor to an absolute row index.
@@ -721,8 +788,22 @@ func (dv *diffView) clampScroll() {
 	if dv.scrollY > maxScroll {
 		dv.scrollY = maxScroll
 	}
-	// Keep cursor in bounds and snap to selectable row.
-	dv.setCursor(dv.cursorY, +1)
+	// Keep cursor in bounds and snap to a selectable row without reapplying
+	// normal scroll-margin behavior during layout clamps.
+	dv.setCursorNoScroll(dv.cursorY, +1)
+
+	viewportHeight := dv.contentViewportHeight()
+	if viewportHeight <= 0 {
+		return
+	}
+	if dv.cursorY < dv.scrollY {
+		dv.cursorY = dv.scrollY
+	}
+	last := dv.lastVisibleRow()
+	if dv.cursorY > last {
+		dv.cursorY = last
+	}
+	dv.setCursorNoScroll(dv.cursorY, +1)
 }
 
 func (dv *diffView) clampKeepPosition() {

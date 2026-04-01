@@ -421,21 +421,113 @@ func TestCtrlFBCtrlBUseWindowScrollWithoutCursorAnchoring(t *testing.T) {
 	m.diffView.scrollY = 20
 	m.diffView.cursorY = 25
 	viewport := m.diffView.contentViewportHeight()
+	cursorOffset := m.diffView.screenLinesInRange(m.diffView.scrollY, m.diffView.cursorY)
 
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
 	if m.diffView.scrollY != 20+viewport {
 		t.Fatalf("scroll after Ctrl+f = %d, want %d", m.diffView.scrollY, 20+viewport)
 	}
-	if m.diffView.cursorY < m.diffView.scrollY || m.diffView.cursorY >= m.diffView.scrollY+viewport {
-		t.Fatalf("cursor after Ctrl+f = %d, expected within visible viewport [%d,%d)", m.diffView.cursorY, m.diffView.scrollY, m.diffView.scrollY+viewport)
+	if got := m.diffView.screenLinesInRange(m.diffView.scrollY, m.diffView.cursorY); got != cursorOffset {
+		t.Fatalf("cursor screen offset after Ctrl+f = %d, want %d", got, cursorOffset)
 	}
 
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
 	if m.diffView.scrollY != 20 {
 		t.Fatalf("scroll after Ctrl+b = %d, want 20", m.diffView.scrollY)
 	}
-	if m.diffView.cursorY < m.diffView.scrollY || m.diffView.cursorY >= m.diffView.scrollY+viewport {
-		t.Fatalf("cursor after Ctrl+b = %d, expected within visible viewport [%d,%d)", m.diffView.cursorY, m.diffView.scrollY, m.diffView.scrollY+viewport)
+	if got := m.diffView.screenLinesInRange(m.diffView.scrollY, m.diffView.cursorY); got != cursorOffset {
+		t.Fatalf("cursor screen offset after Ctrl+b = %d, want %d", got, cursorOffset)
+	}
+}
+
+func TestCtrlFBCtrlBWindowScrollIsSymmetricWithWrappedRows(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.width = 60
+	m.diffView.height = 12
+	m.diffView.setFile(makeWrappedLargeFileDiff(120), m.review)
+	m.diffView.scrollY = 20
+	m.diffView.cursorY = 25
+
+	before := m.diffView.scrollY
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	if m.diffView.scrollY <= before {
+		t.Fatalf("scroll after Ctrl+f = %d, want > %d", m.diffView.scrollY, before)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
+	if m.diffView.scrollY != before {
+		t.Fatalf("scroll after Ctrl+f then Ctrl+b = %d, want %d", m.diffView.scrollY, before)
+	}
+}
+
+func TestCtrlFBCtrlBWindowScrollIsSymmetricFromTop(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.width = 60
+	m.diffView.height = 12
+	m.diffView.setFile(makeWrappedLargeFileDiff(120), m.review)
+	m.diffView.scrollY = 0
+	m.diffView.cursorY = 1
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	if m.diffView.scrollY <= 0 {
+		t.Fatalf("scroll after Ctrl+f = %d, want > 0", m.diffView.scrollY)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
+	if m.diffView.scrollY != 0 {
+		t.Fatalf("scroll after Ctrl+f then Ctrl+b from top = %d, want 0", m.diffView.scrollY)
+	}
+}
+
+func TestCtrlBUsesFullViewportWhenPagingUpFromBottom(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.width = 60
+	m.diffView.height = 12
+	m.diffView.setFile(makeWrappedLargeFileDiff(120), m.review)
+	m.diffView.scrollY = m.diffView.maxWindowScrollY()
+	m.diffView.cursorY = m.diffView.lastVisibleRow()
+
+	before := m.diffView.scrollY
+	pageHeight := m.diffView.contentViewportHeight()
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
+
+	if m.diffView.scrollY >= before {
+		t.Fatalf("scroll after Ctrl+b from bottom = %d, want < %d", m.diffView.scrollY, before)
+	}
+	got := m.diffView.screenLinesInRange(m.diffView.scrollY, before)
+	if got < pageHeight {
+		t.Fatalf("screen-line distance after Ctrl+b from bottom = %d, want at least %d", got, pageHeight)
+	}
+}
+
+func TestCtrlFBCtrlBDoNotMoveOnShortDiff(t *testing.T) {
+	t.Parallel()
+
+	m := newTestModel()
+	m.diffView.height = 12
+	m.diffView.setFile(makeLargeFileDiff(3), m.review)
+	m.diffView.scrollY = 0
+	m.diffView.cursorY = 2
+
+	beforeScroll := m.diffView.scrollY
+	beforeCursor := m.diffView.cursorY
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	if m.diffView.scrollY != beforeScroll || m.diffView.cursorY != beforeCursor {
+		t.Fatalf("state after Ctrl+f on short diff = scroll %d cursor %d, want scroll %d cursor %d", m.diffView.scrollY, m.diffView.cursorY, beforeScroll, beforeCursor)
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlB})
+	if m.diffView.scrollY != beforeScroll || m.diffView.cursorY != beforeCursor {
+		t.Fatalf("state after Ctrl+b on short diff = scroll %d cursor %d, want scroll %d cursor %d", m.diffView.scrollY, m.diffView.cursorY, beforeScroll, beforeCursor)
 	}
 }
 
@@ -448,12 +540,16 @@ func TestCtrlFScrollPersistsAfterViewLayoutClamp(t *testing.T) {
 	m.diffView.scrollY = 20
 	m.diffView.cursorY = 25
 	viewport := m.diffView.contentViewportHeight()
+	cursorOffset := m.diffView.screenLinesInRange(m.diffView.scrollY, m.diffView.cursorY)
 
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyCtrlF})
 	_ = m.View() // triggers layout/clamp path
 
 	if m.diffView.scrollY != 20+viewport {
 		t.Fatalf("scroll after Ctrl+f + View = %d, want %d", m.diffView.scrollY, 20+viewport)
+	}
+	if got := m.diffView.screenLinesInRange(m.diffView.scrollY, m.diffView.cursorY); got != cursorOffset {
+		t.Fatalf("cursor screen offset after Ctrl+f + View = %d, want %d", got, cursorOffset)
 	}
 }
 

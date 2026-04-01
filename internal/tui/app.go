@@ -1158,17 +1158,17 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.diffView.scrollByRows(-count * pageRows)
 	case isWindowPageDownKey(msg):
-		pageRows := m.diffView.logicalRowsForScreenLines(m.diffView.scrollY, m.diffView.contentViewportHeight())
-		if pageRows < 1 {
-			pageRows = 1
+		pageHeight := m.diffView.contentViewportHeight()
+		if pageHeight < 1 {
+			pageHeight = 1
 		}
-		m.diffView.windowScrollByRows(count * pageRows)
+		m.diffView.windowScrollByScreenLines(count * pageHeight)
 	case isWindowPageUpKey(msg):
-		pageRows := m.diffView.logicalRowsForScreenLines(m.diffView.scrollY, m.diffView.contentViewportHeight())
-		if pageRows < 1 {
-			pageRows = 1
+		pageHeight := m.diffView.contentViewportHeight()
+		if pageHeight < 1 {
+			pageHeight = 1
 		}
-		m.diffView.windowScrollByRows(-count * pageRows)
+		m.diffView.windowScrollByScreenLines(-count * pageHeight)
 
 	case key.Matches(msg, keys.NextFile):
 		m.fileStates[m.currentStateKey()] = m.diffView.saveState()
@@ -1754,17 +1754,17 @@ func (m Model) updateVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.diffView.scrollByRows(-count * pageRows)
 	case isWindowPageDownKey(msg):
-		pageRows := m.diffView.logicalRowsForScreenLines(m.diffView.scrollY, m.diffView.contentViewportHeight())
-		if pageRows < 1 {
-			pageRows = 1
+		pageHeight := m.diffView.contentViewportHeight()
+		if pageHeight < 1 {
+			pageHeight = 1
 		}
-		m.diffView.windowScrollByRows(count * pageRows)
+		m.diffView.windowScrollByScreenLines(count * pageHeight)
 	case isWindowPageUpKey(msg):
-		pageRows := m.diffView.logicalRowsForScreenLines(m.diffView.scrollY, m.diffView.contentViewportHeight())
-		if pageRows < 1 {
-			pageRows = 1
+		pageHeight := m.diffView.contentViewportHeight()
+		if pageHeight < 1 {
+			pageHeight = 1
 		}
-		m.diffView.windowScrollByRows(-count * pageRows)
+		m.diffView.windowScrollByScreenLines(-count * pageHeight)
 
 	case key.Matches(msg, keys.Comment):
 		file, ok := m.currentReviewFileName()

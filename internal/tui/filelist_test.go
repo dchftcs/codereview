@@ -159,14 +159,12 @@ func TestFocusPathSwitchesToTreeForReferenceFiles(t *testing.T) {
 	tmp := t.TempDir()
 	mustWriteFile(t, filepath.Join(tmp, "dir", "ref.txt"), "ref")
 
-	fl := newFileList([]diff.FileDiff{{NewName: "changed.txt"}})
-	fl.repoRoot = tmp
-	fl.root = &treeNode{
-		name:     filepath.Base(tmp),
-		absPath:  tmp,
-		isDir:    true,
-		expanded: true,
-	}
+	fl := newFileListWithSource(
+		[]diff.FileDiff{{NewName: "changed.txt"}},
+		tmp,
+		tmp,
+		func() ([]string, error) { return []string{"changed.txt", "dir/ref.txt"}, nil },
+	)
 
 	if err := fl.focusPath("dir/ref.txt"); err != nil {
 		t.Fatalf("focusPath returned error: %v", err)

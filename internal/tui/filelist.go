@@ -42,6 +42,8 @@ type fileList struct {
 	review        *review.Review
 	mode          fileListMode
 	repoRoot      string
+	rootLabel     string
+	listFiles     func() ([]string, error)
 	modifiedIndex map[string]int
 	root          *treeNode // full filesystem tree root
 	modifiedRoot  *treeNode // modified-only tree root
@@ -56,15 +58,27 @@ func newFileList(files []diff.FileDiff) fileList {
 	if root == "" {
 		root = "."
 	}
+	return newFileListWithSource(files, root, root, git.ListFiles)
+}
+
+func newFileListWithSource(files []diff.FileDiff, repoRoot, rootLabel string, listFiles func() ([]string, error)) fileList {
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	if rootLabel == "" {
+		rootLabel = repoRoot
+	}
 	fl := fileList{
 		files:         files,
 		mode:          fileListModeModifiedTree,
-		repoRoot:      root,
+		repoRoot:      repoRoot,
+		rootLabel:     rootLabel,
+		listFiles:     listFiles,
 		modifiedIndex: make(map[string]int, len(files)),
 		readSet:       make(map[string]bool),
 		root: &treeNode{
-			name:     filepath.Base(root),
-			absPath:  root,
+			name:     filepath.Base(rootLabel),
+			absPath:  repoRoot,
 			isDir:    true,
 			expanded: true,
 		},
@@ -131,7 +145,7 @@ func (fl *fileList) modifiedFileAtPath(path string) (*diff.FileDiff, int, bool) 
 func (fl *fileList) buildModifiedTree() {
 	// Build a tree from modified file paths only (no filesystem reads).
 	modRoot := &treeNode{
-		name:     filepath.Base(fl.repoRoot),
+		name:     filepath.Base(fl.rootLabel),
 		absPath:  fl.repoRoot,
 		isDir:    true,
 		expanded: true,
@@ -196,7 +210,7 @@ func (fl *fileList) buildModifiedTree() {
 func (fl *fileList) toggleMode() error {
 	if fl.mode == fileListModeModifiedTree {
 		fl.mode = fileListModeFullTree
-		if err := fl.ensureNodeLoaded(fl.root); err != nil {
+		if err := fl.ensureFullTreeLoaded(); err != nil {
 			return err
 		}
 		fl.rebuildTreeRows()
@@ -211,39 +225,64 @@ func (fl *fileList) toggleMode() error {
 	return nil
 }
 
-func (fl *fileList) ensureNodeLoaded(node *treeNode) error {
-	if node == nil || !node.isDir || node.loaded {
+func (fl *fileList) ensureFullTreeLoaded() error {
+	if fl.root == nil || fl.root.loaded {
 		return nil
 	}
-	entries, err := os.ReadDir(node.absPath)
+	if fl.listFiles == nil {
+		fl.root.loaded = true
+		return nil
+	}
+	files, err := fl.listFiles()
 	if err != nil {
 		return err
 	}
-
-	children := make([]*treeNode, 0, len(entries))
-	for _, e := range entries {
-		name := e.Name()
-		if name == ".git" {
+	for _, relPath := range files {
+		relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+		if relPath == "" {
 			continue
 		}
-		child := &treeNode{
-			name:    name,
-			absPath: filepath.Join(node.absPath, name),
-			isDir:   e.IsDir(),
+		parts := strings.Split(relPath, "/")
+		curr := fl.root
+		for i, part := range parts {
+			isLast := i == len(parts)-1
+			var child *treeNode
+			for _, existing := range curr.children {
+				if existing.name == part {
+					child = existing
+					break
+				}
+			}
+			if child == nil {
+				child = &treeNode{
+					name:     part,
+					absPath:  filepath.Join(curr.absPath, part),
+					isDir:    !isLast,
+					expanded: true,
+					loaded:   true,
+				}
+				curr.children = append(curr.children, child)
+			}
+			curr = child
 		}
-		children = append(children, child)
 	}
-
-	sort.Slice(children, func(i, j int) bool {
-		if children[i].isDir != children[j].isDir {
-			return children[i].isDir
-		}
-		return strings.ToLower(children[i].name) < strings.ToLower(children[j].name)
-	})
-
-	node.children = children
-	node.loaded = true
+	sortTreeChildren(fl.root)
+	fl.root.loaded = true
 	return nil
+}
+
+func sortTreeChildren(node *treeNode) {
+	sort.Slice(node.children, func(i, j int) bool {
+		if node.children[i].isDir != node.children[j].isDir {
+			return node.children[i].isDir
+		}
+		return strings.ToLower(node.children[i].name) < strings.ToLower(node.children[j].name)
+	})
+	for _, child := range node.children {
+		if child.isDir {
+			sortTreeChildren(child)
+		}
+	}
 }
 
 func (fl *fileList) activeRoot() *treeNode {
@@ -330,7 +369,7 @@ func (fl *fileList) toggleTreeExpand() error {
 		return nil
 	}
 	if !row.node.expanded {
-		if err := fl.ensureNodeLoaded(row.node); err != nil {
+		if err := fl.ensureFullTreeLoaded(); err != nil {
 			return err
 		}
 	}
@@ -386,7 +425,10 @@ func (fl *fileList) search(term string) (bool, error) {
 		return false, nil
 	}
 
-	gitFiles, gitErr := git.ListFiles()
+	if fl.listFiles == nil {
+		return false, nil
+	}
+	gitFiles, gitErr := fl.listFiles()
 	if gitErr != nil {
 		return false, gitErr
 	}
@@ -538,10 +580,10 @@ func (fl *fileList) revealTreePath(path string) error {
 	}
 	parts := strings.Split(path, string(filepath.Separator))
 	curr := fl.root
+	if err := fl.ensureFullTreeLoaded(); err != nil {
+		return err
+	}
 	for _, p := range parts {
-		if err := fl.ensureNodeLoaded(curr); err != nil {
-			return err
-		}
 		var next *treeNode
 		for _, child := range curr.children {
 			if child.name == p {
@@ -574,9 +616,6 @@ func (fl *fileList) clickAt(y int) bool {
 	if row.node.isDir {
 		// Toggle directory expand
 		fl.treeSelected = idx
-		if !row.node.expanded {
-			fl.ensureNodeLoaded(row.node)
-		}
 		row.node.expanded = !row.node.expanded
 		fl.rebuildTreeRows()
 		fl.ensureTreeVisible()

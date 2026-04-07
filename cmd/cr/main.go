@@ -20,13 +20,24 @@ import (
 
 func main() {
 	noArgs := len(os.Args) == 1
-	targetArg, outputFile, branchMode, unstagedMode, theme, err := parseArgs()
+	opts, err := parseArgs()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
 		printUsage()
 		os.Exit(2)
 	}
-	resolved, err := resolveMainArgument(targetArg, gitpkg.IsRevision, pathExists, os.Stdin, os.Stderr)
+	gitSvc, err := buildGitService(opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		printUsage()
+		os.Exit(2)
+	}
+
+	pathExistsFn := pathExists
+	if opts.RemoteTarget != "" || opts.ContainerTarget != "" {
+		pathExistsFn = func(string) bool { return false }
+	}
+	resolved, err := resolveMainArgument(opts.TargetArg, gitSvc.IsRevision, pathExistsFn, os.Stdin, os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
 		printUsage()
@@ -37,8 +48,8 @@ func main() {
 
 	// If the path filter points to a directory outside the current repo
 	// (e.g. "../other-repo/"), chdir there and review that repo instead.
-	if pathFilter != "" {
-		if abs, err := filepath.Abs(targetArg); err == nil {
+	if opts.RemoteTarget == "" && opts.ContainerTarget == "" && pathFilter != "" {
+		if abs, err := filepath.Abs(opts.TargetArg); err == nil {
 			if info, err := os.Stat(abs); err == nil && info.IsDir() {
 				if isOutsideRepo(abs) {
 					if err := os.Chdir(abs); err != nil {
@@ -51,33 +62,34 @@ func main() {
 		}
 	}
 
-	if unstagedMode && revSpec != "" {
+	if opts.UnstagedMode && revSpec != "" {
 		fmt.Fprintf(os.Stderr, "Error: --unstaged cannot be combined with a revision argument\n\n")
 		printUsage()
 		os.Exit(2)
 	}
 
 	// If --branch flag or no args on a feature branch, diff against default branch
-	if !unstagedMode && (branchMode || revSpec == "") {
-		branch, err := gitpkg.CurrentBranch()
+	if !opts.UnstagedMode && (opts.BranchMode || revSpec == "") {
+		branch, err := gitSvc.CurrentBranch()
 		if err == nil {
-			defaultBranch := gitpkg.DefaultBranch()
-			if branchMode || (branch != defaultBranch && branch != "HEAD") {
+			defaultBranch := gitSvc.DefaultBranch()
+			if opts.BranchMode || (branch != defaultBranch && branch != "HEAD") {
 				revSpec = defaultBranch + "...HEAD"
 			}
 		}
 	}
 
-	highlight.Init(string(theme))
+	highlight.Init(string(opts.Theme))
 
 	cfg := tui.Config{
 		RevSpec:      revSpec,
-		UnstagedOnly: unstagedMode,
-		OutputFile:   outputFile,
+		UnstagedOnly: opts.UnstagedMode,
+		OutputFile:   opts.OutputFile,
 		PromptSaveAs: noArgs,
 		Highlight:    highlight.Line,
 		PathFilter:   pathFilter,
-		Theme:        theme,
+		Theme:        opts.Theme,
+		Git:          gitSvc,
 	}
 
 	m := tui.NewModel(cfg)
@@ -107,17 +119,43 @@ func main() {
 	}
 }
 
-func parseArgs() (revSpec, outputFile string, branchMode, unstagedMode bool, theme tui.ThemeName, err error) {
-	theme = detectTheme()
+type cliOptions struct {
+	TargetArg       string
+	OutputFile      string
+	RemoteTarget    string
+	ContainerTarget string
+	BranchMode      bool
+	UnstagedMode    bool
+	Theme           tui.ThemeName
+}
+
+func parseArgs() (opts cliOptions, err error) {
+	opts.Theme = detectTheme()
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 
 		// Handle --theme=value
 		if strings.HasPrefix(arg, "--theme=") {
-			theme, err = parseThemeValue(strings.TrimPrefix(arg, "--theme="))
+			opts.Theme, err = parseThemeValue(strings.TrimPrefix(arg, "--theme="))
 			if err != nil {
-				return "", "", false, false, "", err
+				return cliOptions{}, err
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--remote=") {
+			opts.RemoteTarget = strings.TrimSpace(strings.TrimPrefix(arg, "--remote="))
+			if opts.RemoteTarget == "" {
+				return cliOptions{}, fmt.Errorf("missing value for --remote")
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--container=") {
+			opts.ContainerTarget = strings.TrimSpace(strings.TrimPrefix(arg, "--container="))
+			if opts.ContainerTarget == "" {
+				return cliOptions{}, fmt.Errorf("missing value for --container")
 			}
 			continue
 		}
@@ -125,41 +163,74 @@ func parseArgs() (revSpec, outputFile string, branchMode, unstagedMode bool, the
 		switch arg {
 		case "--theme":
 			if i+1 >= len(args) {
-				return "", "", false, false, "", fmt.Errorf("missing value for %s", arg)
+				return cliOptions{}, fmt.Errorf("missing value for %s", arg)
 			}
-			theme, err = parseThemeValue(args[i+1])
+			opts.Theme, err = parseThemeValue(args[i+1])
 			if err != nil {
-				return "", "", false, false, "", err
+				return cliOptions{}, err
 			}
 			i++
 		case "--output", "-o":
 			if i+1 >= len(args) {
-				return "", "", false, false, "", fmt.Errorf("missing value for %s", arg)
+				return cliOptions{}, fmt.Errorf("missing value for %s", arg)
 			}
-			outputFile = args[i+1]
+			opts.OutputFile = args[i+1]
+			i++
+		case "--remote":
+			if i+1 >= len(args) {
+				return cliOptions{}, fmt.Errorf("missing value for %s", arg)
+			}
+			opts.RemoteTarget = strings.TrimSpace(args[i+1])
+			i++
+		case "--container":
+			if i+1 >= len(args) {
+				return cliOptions{}, fmt.Errorf("missing value for %s", arg)
+			}
+			opts.ContainerTarget = strings.TrimSpace(args[i+1])
 			i++
 		case "--branch", "-b":
-			branchMode = true
+			opts.BranchMode = true
 		case "--unstaged", "-u":
-			unstagedMode = true
+			opts.UnstagedMode = true
 		case "--help", "-h":
 			printUsage()
 			os.Exit(0)
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return "", "", false, false, "", fmt.Errorf("unknown flag: %s", arg)
+				return cliOptions{}, fmt.Errorf("unknown flag: %s", arg)
 			}
 			// Treat current-directory pathspec aliases like no positional revision.
 			if arg == "." || arg == "./" {
 				continue
 			}
-			revSpec = arg
+			opts.TargetArg = arg
 		}
 	}
-	if unstagedMode && branchMode {
-		return "", "", false, false, "", fmt.Errorf("--unstaged cannot be combined with --branch")
+	if opts.UnstagedMode && opts.BranchMode {
+		return cliOptions{}, fmt.Errorf("--unstaged cannot be combined with --branch")
 	}
-	return
+	if opts.RemoteTarget != "" && opts.ContainerTarget != "" {
+		return cliOptions{}, fmt.Errorf("--remote cannot be combined with --container")
+	}
+	return opts, nil
+}
+
+func buildGitService(opts cliOptions) (*gitpkg.Service, error) {
+	if strings.TrimSpace(opts.RemoteTarget) == "" && strings.TrimSpace(opts.ContainerTarget) == "" {
+		return gitpkg.NewLocalService(), nil
+	}
+	if opts.RemoteTarget != "" {
+		target, err := gitpkg.ParseRemoteTarget(opts.RemoteTarget)
+		if err != nil {
+			return nil, err
+		}
+		return gitpkg.NewRemoteService(target), nil
+	}
+	target, err := gitpkg.ParseContainerTarget(opts.ContainerTarget)
+	if err != nil {
+		return nil, err
+	}
+	return gitpkg.NewContainerService(target), nil
 }
 
 type resolvedArg struct {
@@ -312,6 +383,8 @@ Usage:
   cr 'internal/tui/*.go'      Review files matching glob (basic glob support)
   cr --branch, -b             Explicitly diff current branch against main/master
   cr --unstaged, -u           Review only unstaged tracked changes + untracked files
+  cr --remote host:/repo      Review a remote repo over SSH
+  cr --container name:/repo   Review a repo inside a Docker container
   cr HEAD~1                   Review last commit
   cr HEAD~3..HEAD             Review last 3 commits
   cr abc123                   Review specific commit

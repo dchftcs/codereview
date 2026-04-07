@@ -13,13 +13,15 @@ func TestParseArgsSuccessPaths(t *testing.T) {
 	setEnv(t, "COLORFGBG", "")
 
 	cases := []struct {
-		name         string
-		args         []string
-		wantRev      string
-		wantOutput   string
-		wantBranch   bool
-		wantUnstaged bool
-		wantTheme    tui.ThemeName
+		name          string
+		args          []string
+		wantRev       string
+		wantOutput    string
+		wantRemote    string
+		wantContainer string
+		wantBranch    bool
+		wantUnstaged  bool
+		wantTheme     tui.ThemeName
 	}{
 		{name: "no args", args: []string{"cr"}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
 		{name: "dot path means current repo", args: []string{"cr", "."}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
@@ -31,17 +33,21 @@ func TestParseArgsSuccessPaths(t *testing.T) {
 		{name: "branch", args: []string{"cr", "--branch"}, wantRev: "", wantOutput: "", wantBranch: true, wantUnstaged: false, wantTheme: tui.ThemeDark},
 		{name: "unstaged", args: []string{"cr", "--unstaged"}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: true, wantTheme: tui.ThemeDark},
 		{name: "unstaged short", args: []string{"cr", "-u"}, wantRev: "", wantOutput: "", wantBranch: false, wantUnstaged: true, wantTheme: tui.ThemeDark},
+		{name: "remote equals", args: []string{"cr", "--remote=dc@app:/srv/repo"}, wantRev: "", wantOutput: "", wantRemote: "dc@app:/srv/repo", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
+		{name: "remote separate", args: []string{"cr", "--remote", "app:/srv/repo", "HEAD~1"}, wantRev: "HEAD~1", wantOutput: "", wantRemote: "app:/srv/repo", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
+		{name: "container equals", args: []string{"cr", "--container=api:/workspace/repo"}, wantRev: "", wantOutput: "", wantContainer: "api:/workspace/repo", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
+		{name: "container separate", args: []string{"cr", "--container", "api:/workspace/repo", "HEAD~1"}, wantRev: "HEAD~1", wantOutput: "", wantContainer: "api:/workspace/repo", wantBranch: false, wantUnstaged: false, wantTheme: tui.ThemeDark},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setArgs(t, tc.args...)
-			rev, out, branch, unstaged, theme, err := parseArgs()
+			opts, err := parseArgs()
 			if err != nil {
 				t.Fatalf("parseArgs returned error: %v", err)
 			}
-			if rev != tc.wantRev || out != tc.wantOutput || branch != tc.wantBranch || unstaged != tc.wantUnstaged || theme != tc.wantTheme {
-				t.Fatalf("parseArgs mismatch: got rev=%q out=%q branch=%v unstaged=%v theme=%q", rev, out, branch, unstaged, theme)
+			if opts.TargetArg != tc.wantRev || opts.OutputFile != tc.wantOutput || opts.RemoteTarget != tc.wantRemote || opts.ContainerTarget != tc.wantContainer || opts.BranchMode != tc.wantBranch || opts.UnstagedMode != tc.wantUnstaged || opts.Theme != tc.wantTheme {
+				t.Fatalf("parseArgs mismatch: got target=%q out=%q remote=%q container=%q branch=%v unstaged=%v theme=%q", opts.TargetArg, opts.OutputFile, opts.RemoteTarget, opts.ContainerTarget, opts.BranchMode, opts.UnstagedMode, opts.Theme)
 			}
 		})
 	}
@@ -58,15 +64,18 @@ func TestParseArgsErrors(t *testing.T) {
 		{name: "missing output short", args: []string{"cr", "-o"}, wantErr: "missing value for -o"},
 		{name: "missing output long", args: []string{"cr", "--output"}, wantErr: "missing value for --output"},
 		{name: "missing theme", args: []string{"cr", "--theme"}, wantErr: "missing value for --theme"},
+		{name: "missing remote", args: []string{"cr", "--remote"}, wantErr: "missing value for --remote"},
+		{name: "missing container", args: []string{"cr", "--container"}, wantErr: "missing value for --container"},
 		{name: "invalid theme", args: []string{"cr", "--theme", "solarized"}, wantErr: `invalid theme "solarized"`},
 		{name: "branch and unstaged", args: []string{"cr", "--branch", "--unstaged"}, wantErr: "--unstaged cannot be combined with --branch"},
+		{name: "remote and container", args: []string{"cr", "--remote", "app:/srv/repo", "--container", "api:/workspace/repo"}, wantErr: "--remote cannot be combined with --container"},
 		{name: "unknown flag", args: []string{"cr", "--wat"}, wantErr: "unknown flag: --wat"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setArgs(t, tc.args...)
-			_, _, _, _, _, err := parseArgs()
+			_, err := parseArgs()
 			if err == nil {
 				t.Fatal("parseArgs error = nil, want non-nil")
 			}
@@ -134,21 +143,41 @@ func TestParseArgsDetectThemeFromEnv(t *testing.T) {
 	setArgs(t, "cr")
 
 	setEnv(t, "COLORFGBG", "15;9")
-	_, _, _, _, theme, err := parseArgs()
+	opts, err := parseArgs()
 	if err != nil {
 		t.Fatalf("parseArgs returned error: %v", err)
 	}
-	if theme != tui.ThemeLight {
-		t.Fatalf("theme = %q, want %q", theme, tui.ThemeLight)
+	if opts.Theme != tui.ThemeLight {
+		t.Fatalf("theme = %q, want %q", opts.Theme, tui.ThemeLight)
 	}
 
 	setEnv(t, "COLORFGBG", "15;1")
-	_, _, _, _, theme, err = parseArgs()
+	opts, err = parseArgs()
 	if err != nil {
 		t.Fatalf("parseArgs returned error: %v", err)
 	}
-	if theme != tui.ThemeDark {
-		t.Fatalf("theme = %q, want %q", theme, tui.ThemeDark)
+	if opts.Theme != tui.ThemeDark {
+		t.Fatalf("theme = %q, want %q", opts.Theme, tui.ThemeDark)
+	}
+}
+
+func TestBuildGitServiceContainer(t *testing.T) {
+	svc, err := buildGitService(cliOptions{ContainerTarget: "api:/workspace/repo"})
+	if err != nil {
+		t.Fatalf("buildGitService returned error: %v", err)
+	}
+	if got := svc.DisplayRoot(); got != "docker:api:/workspace/repo" {
+		t.Fatalf("DisplayRoot = %q, want %q", got, "docker:api:/workspace/repo")
+	}
+}
+
+func TestBuildGitServiceLocal(t *testing.T) {
+	svc, err := buildGitService(cliOptions{})
+	if err != nil {
+		t.Fatalf("buildGitService returned error: %v", err)
+	}
+	if svc.IsRemote() {
+		t.Fatal("IsRemote = true, want false")
 	}
 }
 

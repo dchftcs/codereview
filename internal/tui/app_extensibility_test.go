@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/dc/codereview/internal/diff"
 	gitpkg "github.com/dc/codereview/internal/git"
@@ -51,6 +52,20 @@ type fakeGitService struct {
 	untrackedOut   []string
 	untrackedErr   error
 	untrackedCalls int
+
+	listFilesOut   []string
+	listFilesErr   error
+	listFilesCalls int
+
+	readFileOut   []byte
+	readFileErr   error
+	readFilePath  string
+	readFileCalls int
+
+	repoRoot       string
+	displayRoot    string
+	localWorktree  bool
+	pollInterval   time.Duration
 }
 
 func (f *fakeGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
@@ -101,6 +116,42 @@ func (f *fakeGitService) Unstage(path string) error {
 func (f *fakeGitService) UntrackedFiles() ([]string, error) {
 	f.untrackedCalls++
 	return f.untrackedOut, f.untrackedErr
+}
+
+func (f *fakeGitService) ListFiles() ([]string, error) {
+	f.listFilesCalls++
+	return f.listFilesOut, f.listFilesErr
+}
+
+func (f *fakeGitService) ReadFile(path string) ([]byte, error) {
+	f.readFileCalls++
+	f.readFilePath = path
+	return f.readFileOut, f.readFileErr
+}
+
+func (f *fakeGitService) RepoRoot() string {
+	if f.repoRoot != "" {
+		return f.repoRoot
+	}
+	return "."
+}
+
+func (f *fakeGitService) DisplayRoot() string {
+	if f.displayRoot != "" {
+		return f.displayRoot
+	}
+	return f.RepoRoot()
+}
+
+func (f *fakeGitService) HasLocalWorkingTree() bool {
+	return f.localWorktree
+}
+
+func (f *fakeGitService) StatusPollInterval() time.Duration {
+	if f.pollInterval > 0 {
+		return f.pollInterval
+	}
+	return gitpkg.DefaultStatusPollInterval
 }
 
 func TestNewModelDefaultsGitService(t *testing.T) {

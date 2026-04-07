@@ -14,12 +14,25 @@ Or build locally:
 go build -o cr ./cmd/cr/
 ```
 
+Deploy to a remote SSH host or a running container:
+
+```bash
+scripts/deploy-remote.sh --target ssh --ssh-host app.example.com
+scripts/deploy-remote.sh --target container --container my-dev-box --install-mode temporary
+```
+
+The deploy script copies the current repo state except `.git`, builds `./cmd/cr`
+on the remote side, and installs the binary either into a temporary staging
+directory or a persistent prefix such as `$HOME/.local/bin`.
+
 ## Usage
 
 ```bash
 cr                              # Review current branch vs main/master (auto-detect)
 cr internal/tui                 # Review only files under a relative path prefix
 cr 'internal/tui/*.go'          # Review files matching a basic glob pattern
+cr --remote app:/srv/repo       # Review a remote repo over SSH
+cr --container api:/workspace   # Review a repo inside a Docker container
 cr -b, --branch                 # Explicitly diff current branch against main/master
 cr -u, --unstaged               # Review only unstaged tracked changes + untracked files
 cr HEAD~1                       # Review the last commit
@@ -32,7 +45,10 @@ cr -o review.md                 # Save review output to a file
 When run with no arguments on a feature branch, `cr` automatically diffs against `main` (or `master`), showing branch changes from the merge base plus staged/unstaged/untracked working-tree changes.
 In the file list, untracked files are marked with `??`.
 `--unstaged` shows only unstaged tracked changes (working tree vs index) plus untracked files.
+`--remote [user@]host:/path/to/repo` runs git and file reads over SSH against that remote working tree. Remote status polling is slower than local polling to keep repeated refreshes inexpensive.
+`--container name:/path/to/repo` runs the same workflow via `docker exec -i <name> sh -lc ...` inside a running container.
 If an argument could be interpreted as either a git revision and a path, `cr` prompts you to choose.
+The SSH/container path flow currently starts from `git diff`, `git status`, and `git ls-files`, and reads individual file contents on demand when you open reference-file views. That keeps the initial remote load cheap while leaving room for finer-grained lazy loading later.
 
 ## Keys
 

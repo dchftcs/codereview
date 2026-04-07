@@ -54,44 +54,80 @@ type GitService interface {
 	Stage(path string) error
 	Unstage(path string) error
 	UntrackedFiles() ([]string, error)
+	ListFiles() ([]string, error)
+	ReadFile(path string) ([]byte, error)
+	RepoRoot() string
+	DisplayRoot() string
+	HasLocalWorkingTree() bool
+	StatusPollInterval() time.Duration
 }
 
-type defaultGitService struct{}
-
-func (defaultGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
-	return gitpkg.Diff(revSpec)
+type defaultGitService struct {
+	svc *gitpkg.Service
 }
 
-func (defaultGitService) DiffFull(revSpec string) (string, []gitpkg.CollapsedDir, error) {
-	return gitpkg.DiffFull(revSpec)
+func newDefaultGitService() defaultGitService {
+	return defaultGitService{svc: gitpkg.NewLocalService()}
 }
 
-func (defaultGitService) DiffUnstaged() (string, []gitpkg.CollapsedDir, error) {
-	return gitpkg.DiffUnstaged()
+func (g defaultGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
+	return g.svc.Diff(revSpec)
 }
 
-func (defaultGitService) DiffUnstagedFull() (string, []gitpkg.CollapsedDir, error) {
-	return gitpkg.DiffUnstagedFull()
+func (g defaultGitService) DiffFull(revSpec string) (string, []gitpkg.CollapsedDir, error) {
+	return g.svc.DiffFull(revSpec)
 }
 
-func (defaultGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
-	return gitpkg.Log(n)
+func (g defaultGitService) DiffUnstaged() (string, []gitpkg.CollapsedDir, error) {
+	return g.svc.DiffUnstaged()
 }
 
-func (defaultGitService) Status() ([]gitpkg.FileStatus, error) {
-	return gitpkg.Status()
+func (g defaultGitService) DiffUnstagedFull() (string, []gitpkg.CollapsedDir, error) {
+	return g.svc.DiffUnstagedFull()
 }
 
-func (defaultGitService) Stage(path string) error {
-	return gitpkg.Stage(path)
+func (g defaultGitService) Log(n int) ([]gitpkg.CommitInfo, error) {
+	return g.svc.Log(n)
 }
 
-func (defaultGitService) Unstage(path string) error {
-	return gitpkg.Unstage(path)
+func (g defaultGitService) Status() ([]gitpkg.FileStatus, error) {
+	return g.svc.Status()
 }
 
-func (defaultGitService) UntrackedFiles() ([]string, error) {
-	return gitpkg.UntrackedFiles()
+func (g defaultGitService) Stage(path string) error {
+	return g.svc.Stage(path)
+}
+
+func (g defaultGitService) Unstage(path string) error {
+	return g.svc.Unstage(path)
+}
+
+func (g defaultGitService) UntrackedFiles() ([]string, error) {
+	return g.svc.UntrackedFiles()
+}
+
+func (g defaultGitService) ListFiles() ([]string, error) {
+	return g.svc.ListFiles()
+}
+
+func (g defaultGitService) ReadFile(path string) ([]byte, error) {
+	return g.svc.ReadFile(path)
+}
+
+func (g defaultGitService) RepoRoot() string {
+	return g.svc.RepoRoot()
+}
+
+func (g defaultGitService) DisplayRoot() string {
+	return g.svc.DisplayRoot()
+}
+
+func (g defaultGitService) HasLocalWorkingTree() bool {
+	return g.svc.HasLocalWorkingTree()
+}
+
+func (g defaultGitService) StatusPollInterval() time.Duration {
+	return g.svc.StatusPollInterval()
 }
 
 // Config holds TUI startup configuration.
@@ -116,7 +152,6 @@ const minContentHeight = scrollMarginLines*2 + 1
 const defaultReviewOutputFile = "REVIEW.md"
 const generalCommentInputContentHeight = 7
 const mouseDoubleClickThreshold = 350 * time.Millisecond
-const idleStatusPollInterval = 300 * time.Millisecond
 const activeStatusPollDebounce = 1 * time.Second
 
 type statusSnapshotEntry struct {
@@ -182,12 +217,13 @@ type Model struct {
 	statusPollInFlight bool
 	gitOpInFlight      bool // true while a stage toggle or diff reload goroutine is running
 	lastUserAction     time.Time
+	statusPollInterval time.Duration
 	now                func() time.Time
 }
 
 func NewModel(cfg Config) Model {
 	if cfg.Git == nil {
-		cfg.Git = defaultGitService{}
+		cfg.Git = newDefaultGitService()
 	}
 	if cfg.Theme != "" {
 		applyTheme(cfg.Theme)
@@ -208,6 +244,7 @@ func NewModel(cfg Config) Model {
 		referenceFiles: make(map[string]*diff.FileDiff),
 		statusSnapshot: make(map[string]statusSnapshotEntry),
 		statusEpoch:    1,
+		statusPollInterval: cfg.Git.StatusPollInterval(),
 		now:            time.Now,
 	}
 	applyDiffContext(m.review, cfg.RevSpec, cfg.UnstagedOnly)
@@ -265,7 +302,7 @@ func applyDiffContext(rev *review.Review, revSpec string, unstagedOnly bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadDiffForStatusEpoch("", m.statusEpoch), scheduleStatusPoll())
+	return tea.Batch(m.loadDiffForStatusEpoch("", m.statusEpoch), m.scheduleStatusPoll())
 }
 
 type diffLoadedMsg struct {
@@ -341,8 +378,12 @@ type statusPolledMsg struct {
 	err      error
 }
 
-func scheduleStatusPoll() tea.Cmd {
-	return tea.Tick(idleStatusPollInterval, func(time.Time) tea.Msg {
+func (m Model) scheduleStatusPoll() tea.Cmd {
+	interval := m.statusPollInterval
+	if interval <= 0 {
+		interval = gitpkg.DefaultStatusPollInterval
+	}
+	return tea.Tick(interval, func(time.Time) tea.Msg {
 		return pollTickMsg{}
 	})
 }
@@ -491,11 +532,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pollTickMsg:
 		if !m.canToggleStage() || m.statusPollInFlight || m.gitOpInFlight || m.now().Sub(m.lastUserAction) < activeStatusPollDebounce {
-			return m, scheduleStatusPoll()
+			return m, m.scheduleStatusPoll()
 		}
 		m.statusPollInFlight = true
 		epoch := m.nextStatusEpoch()
-		return m, tea.Batch(scheduleStatusPoll(), m.pollStatus(epoch))
+		return m, tea.Batch(m.scheduleStatusPoll(), m.pollStatus(epoch))
 
 	case diffLoadedMsg:
 		m.gitOpInFlight = false
@@ -714,7 +755,7 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 	prevMode := m.fileList.mode
 	prevReadSet := m.fileList.readSet
 	prevRoot := m.fileList.root
-	m.fileList = newFileList(msg.files)
+	m.fileList = newFileListWithSource(msg.files, m.git.RepoRoot(), m.git.DisplayRoot(), m.git.ListFiles)
 	m.fileList.review = m.review
 	if prevReadSet != nil {
 		m.fileList.readSet = prevReadSet
@@ -740,7 +781,7 @@ func (m *Model) applyCommitLoaded(msg commitLoadedMsg) {
 		return
 	}
 	msg.files = filterDiffFiles(msg.files, m.config.PathFilter)
-	m.fileList = newFileList(msg.files)
+	m.fileList = newFileListWithSource(msg.files, m.git.RepoRoot(), m.git.DisplayRoot(), m.git.ListFiles)
 	m.fileList.review = m.review
 	m.expandedSet = make(map[int]bool)
 	m.expandedFiles = nil
@@ -931,8 +972,7 @@ func (m *Model) referenceFileDiff(path string) (*diff.FileDiff, error) {
 		return f, nil
 	}
 
-	absPath := filepath.Join(m.fileList.repoRoot, filepath.FromSlash(path))
-	content, err := os.ReadFile(absPath)
+	content, err := m.git.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1002,7 +1042,10 @@ func (m *Model) currentEditorTarget() (string, int, bool, error) {
 	}
 
 	for _, relPath := range candidates {
-		absPath := filepath.Join(m.fileList.repoRoot, filepath.FromSlash(relPath))
+		if !m.git.HasLocalWorkingTree() {
+			break
+		}
+		absPath := filepath.Join(m.git.RepoRoot(), filepath.FromSlash(relPath))
 		info, statErr := os.Stat(absPath)
 		if statErr == nil && !info.IsDir() {
 			return absPath, line, true, nil

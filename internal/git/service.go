@@ -1,10 +1,16 @@
 package git
 
 import (
+	"archive/tar"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +30,9 @@ type ContainerTarget struct {
 type Service struct {
 	remote    *RemoteTarget
 	container *ContainerTarget
+	cacheMu   sync.RWMutex
+	fileCache map[string][]byte
+	batchRead func([]string) (map[string][]byte, error)
 }
 
 func NewLocalService() *Service {
@@ -302,7 +311,67 @@ func (s *Service) ReadFile(path string) ([]byte, error) {
 	if s == nil || !s.IsRemote() {
 		return os.ReadFile(path)
 	}
-	return s.runRemoteBytes("cat -- " + shellQuote(path))
+	if content, ok := s.cachedFile(path); ok {
+		return content, nil
+	}
+	if err := s.PrefetchFiles([]string{path}); err == nil {
+		if content, ok := s.cachedFile(path); ok {
+			return content, nil
+		}
+	}
+	content, err := s.runRemoteBytes("cat -- " + shellQuote(path))
+	if err != nil {
+		return nil, err
+	}
+	s.storeCachedFiles(map[string][]byte{path: content})
+	return content, nil
+}
+
+func (s *Service) PrefetchFiles(paths []string) error {
+	if s == nil || !s.IsRemote() {
+		return nil
+	}
+	paths = s.uncachedPaths(paths)
+	if len(paths) == 0 {
+		return nil
+	}
+	batchRead := s.batchRead
+	if batchRead == nil {
+		batchRead = s.readRemoteFilesBatch
+	}
+	files, err := batchRead(paths)
+	if err != nil {
+		return err
+	}
+	s.storeCachedFiles(files)
+	return nil
+}
+
+func (s *Service) InvalidateFiles(paths []string) {
+	if s == nil || !s.IsRemote() {
+		return
+	}
+	paths = normalizeRelativePaths(paths)
+	if len(paths) == 0 {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.fileCache == nil {
+		return
+	}
+	for _, path := range paths {
+		delete(s.fileCache, path)
+	}
+}
+
+func (s *Service) ClearFileCache() {
+	if s == nil || !s.IsRemote() {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	clear(s.fileCache)
 }
 
 func (s *Service) appendUntrackedDiff(base string, fullContext bool) (string, []CollapsedDir, error) {
@@ -406,6 +475,19 @@ func (s *Service) runRemoteBytes(command string) ([]byte, error) {
 	return s.runTargetBytes(command)
 }
 
+func (s *Service) readRemoteFilesBatch(paths []string) (map[string][]byte, error) {
+	paths = normalizeRelativePaths(paths)
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	command := "tar -h -cf - -- " + joinShellArgs(paths)
+	archiveBytes, err := s.runTargetBytes(command)
+	if err != nil {
+		return nil, err
+	}
+	return readTarEntries(archiveBytes)
+}
+
 func (s *Service) runTargetBytes(command string) ([]byte, error) {
 	cmd, err := s.targetCommand(command)
 	if err != nil {
@@ -460,4 +542,116 @@ func joinShellArgs(args []string) string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func normalizeRelativePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.ToSlash(strings.TrimSpace(path))
+		for strings.HasPrefix(path, "./") {
+			path = strings.TrimPrefix(path, "./")
+		}
+		path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+		switch path {
+		case "", ".", "/dev/null":
+			continue
+		}
+		if strings.HasPrefix(path, "../") {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func readTarEntries(archiveBytes []byte) (map[string][]byte, error) {
+	files := make(map[string][]byte)
+	tr := tar.NewReader(bytes.NewReader(archiveBytes))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return files, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if hdr == nil || hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.ToSlash(filepath.Clean(filepath.FromSlash(hdr.Name)))
+		files[path] = content
+	}
+}
+
+func (s *Service) uncachedPaths(paths []string) []string {
+	paths = normalizeRelativePaths(paths)
+	if len(paths) == 0 {
+		return nil
+	}
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if s.fileCache == nil {
+			out = append(out, path)
+			continue
+		}
+		if _, ok := s.fileCache[path]; !ok {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func (s *Service) cachedFile(path string) ([]byte, bool) {
+	path = firstNormalizedPath(path)
+	if path == "" {
+		return nil, false
+	}
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	if s.fileCache == nil {
+		return nil, false
+	}
+	content, ok := s.fileCache[path]
+	if !ok {
+		return nil, false
+	}
+	return append([]byte(nil), content...), true
+}
+
+func (s *Service) storeCachedFiles(files map[string][]byte) {
+	if len(files) == 0 {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.fileCache == nil {
+		s.fileCache = make(map[string][]byte, len(files))
+	}
+	for path, content := range files {
+		path = firstNormalizedPath(path)
+		if path == "" {
+			continue
+		}
+		s.fileCache[path] = append([]byte(nil), content...)
+	}
+}
+
+func firstNormalizedPath(path string) string {
+	paths := normalizeRelativePaths([]string{path})
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }

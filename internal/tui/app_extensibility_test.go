@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,27 +12,27 @@ import (
 )
 
 type fakeGitService struct {
-	diffOut          string
-	diffCollapsed    []gitpkg.CollapsedDir
-	diffErr          error
-	diffCalls        int
-	diffRevSpec      string
+	diffOut       string
+	diffCollapsed []gitpkg.CollapsedDir
+	diffErr       error
+	diffCalls     int
+	diffRevSpec   string
 
-	diffFullOut          string
-	diffFullCollapsed    []gitpkg.CollapsedDir
-	diffFullErr          error
-	diffFullCalls        int
-	diffFullRevSpec      string
+	diffFullOut       string
+	diffFullCollapsed []gitpkg.CollapsedDir
+	diffFullErr       error
+	diffFullCalls     int
+	diffFullRevSpec   string
 
-	diffUnstagedOut          string
-	diffUnstagedCollapsed    []gitpkg.CollapsedDir
-	diffUnstagedErr          error
-	diffUnstagedCalls        int
+	diffUnstagedOut       string
+	diffUnstagedCollapsed []gitpkg.CollapsedDir
+	diffUnstagedErr       error
+	diffUnstagedCalls     int
 
-	diffUnstagedFullOut          string
-	diffUnstagedFullCollapsed    []gitpkg.CollapsedDir
-	diffUnstagedFullErr          error
-	diffUnstagedFullCalls        int
+	diffUnstagedFullOut       string
+	diffUnstagedFullCollapsed []gitpkg.CollapsedDir
+	diffUnstagedFullErr       error
+	diffUnstagedFullCalls     int
 
 	logOut   []gitpkg.CommitInfo
 	logErr   error
@@ -62,10 +63,15 @@ type fakeGitService struct {
 	readFilePath  string
 	readFileCalls int
 
-	repoRoot       string
-	displayRoot    string
-	localWorktree  bool
-	pollInterval   time.Duration
+	prefetchFilesPaths  [][]string
+	prefetchFilesErr    error
+	invalidatedPaths    [][]string
+	clearFileCacheCalls int
+
+	repoRoot      string
+	displayRoot   string
+	localWorktree bool
+	pollInterval  time.Duration
 }
 
 func (f *fakeGitService) Diff(revSpec string) (string, []gitpkg.CollapsedDir, error) {
@@ -129,6 +135,21 @@ func (f *fakeGitService) ReadFile(path string) ([]byte, error) {
 	return f.readFileOut, f.readFileErr
 }
 
+func (f *fakeGitService) PrefetchFiles(paths []string) error {
+	copied := append([]string(nil), paths...)
+	f.prefetchFilesPaths = append(f.prefetchFilesPaths, copied)
+	return f.prefetchFilesErr
+}
+
+func (f *fakeGitService) InvalidateFiles(paths []string) {
+	copied := append([]string(nil), paths...)
+	f.invalidatedPaths = append(f.invalidatedPaths, copied)
+}
+
+func (f *fakeGitService) ClearFileCache() {
+	f.clearFileCacheCalls++
+}
+
 func (f *fakeGitService) RepoRoot() string {
 	if f.repoRoot != "" {
 		return f.repoRoot
@@ -170,8 +191,9 @@ func TestLoadDiffUsesInjectedGitService(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeGitService{
-		diffOut: "",
-		logOut:  []gitpkg.CommitInfo{{Hash: "abc123", Subject: "test commit"}},
+		localWorktree: true,
+		diffOut:       "",
+		logOut:        []gitpkg.CommitInfo{{Hash: "abc123", Subject: "test commit"}},
 	}
 	m := NewModel(Config{RevSpec: "HEAD~1", Git: fake})
 
@@ -197,8 +219,128 @@ func TestLoadDiffUsesInjectedGitService(t *testing.T) {
 	if fake.untrackedCalls != 1 {
 		t.Fatalf("UntrackedFiles call count = %d, want 1", fake.untrackedCalls)
 	}
+	if len(fake.prefetchFilesPaths) != 0 {
+		t.Fatalf("PrefetchFiles call count = %d, want 0 for local worktree", len(fake.prefetchFilesPaths))
+	}
+	if fake.clearFileCacheCalls != 0 {
+		t.Fatalf("ClearFileCache call count = %d, want 0 for local worktree", fake.clearFileCacheCalls)
+	}
 	if !reflect.DeepEqual(msg.commits, fake.logOut) {
 		t.Fatalf("commits = %#v, want %#v", msg.commits, fake.logOut)
+	}
+}
+
+func TestLoadDiffPrefetchesCurrentDiffFiles(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{
+		localWorktree: true,
+		diffOut: strings.Join([]string{
+			"diff --git a/old.txt b/new.txt",
+			"index e69de29..e69de29 100644",
+			"--- a/old.txt",
+			"+++ b/new.txt",
+			"@@ -0,0 +1 @@",
+			"+hello",
+			"diff --git a/deleted.txt b/deleted.txt",
+			"deleted file mode 100644",
+			"index e69de29..0000000",
+			"--- a/deleted.txt",
+			"+++ /dev/null",
+			"@@ -1 +0,0 @@",
+			"-bye",
+			"",
+		}, "\n"),
+	}
+	m := NewModel(Config{Git: fake})
+
+	msg := m.loadDiff()().(diffLoadedMsg)
+	if msg.err != nil {
+		t.Fatalf("loadDiff returned error: %v", msg.err)
+	}
+	if got := fake.prefetchFilesPaths; !reflect.DeepEqual(got, [][]string(nil)) {
+		t.Fatalf("PrefetchFiles paths in local mode = %#v, want none", got)
+	}
+}
+
+func TestLoadDiffPrefetchesCurrentDiffFilesForRemote(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{
+		localWorktree: false,
+		diffOut: strings.Join([]string{
+			"diff --git a/old.txt b/new.txt",
+			"index e69de29..e69de29 100644",
+			"--- a/old.txt",
+			"+++ b/new.txt",
+			"@@ -0,0 +1 @@",
+			"+hello",
+			"diff --git a/deleted.txt b/deleted.txt",
+			"deleted file mode 100644",
+			"index e69de29..0000000",
+			"--- a/deleted.txt",
+			"+++ /dev/null",
+			"@@ -1 +0,0 @@",
+			"-bye",
+			"",
+		}, "\n"),
+	}
+	m := NewModel(Config{Git: fake})
+
+	msg := m.loadDiff()().(diffLoadedMsg)
+	if msg.err != nil {
+		t.Fatalf("loadDiff returned error: %v", msg.err)
+	}
+	if got := fake.prefetchFilesPaths; !reflect.DeepEqual(got, [][]string{{"new.txt"}}) {
+		t.Fatalf("PrefetchFiles paths = %#v, want %#v", got, [][]string{{"new.txt"}})
+	}
+	if fake.clearFileCacheCalls != 1 {
+		t.Fatalf("ClearFileCache call count = %d, want 1 for remote mode", fake.clearFileCacheCalls)
+	}
+}
+
+func TestApplyDiffLoadedClearsReferenceFileCache(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{}
+	fake.localWorktree = true
+	m := NewModel(Config{Git: fake})
+	m.referenceFiles["stale.txt"] = &diff.FileDiff{NewName: "stale.txt"}
+
+	m.applyDiffLoaded(diffLoadedMsg{files: []diff.FileDiff{{NewName: "fresh.txt"}}})
+
+	if len(m.referenceFiles) != 0 {
+		t.Fatalf("referenceFiles = %#v, want empty map", m.referenceFiles)
+	}
+}
+
+func TestToggleStageInvalidatesChangedPath(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{localWorktree: true}
+	m := NewModel(Config{Git: fake})
+
+	msg := m.toggleStageForPath("pkg/file.go", false)().(stageToggledMsg)
+	if msg.err != nil {
+		t.Fatalf("toggleStageForPath returned error: %v", msg.err)
+	}
+	if len(fake.invalidatedPaths) != 0 {
+		t.Fatalf("InvalidateFiles paths in local mode = %#v, want none", fake.invalidatedPaths)
+	}
+}
+
+func TestToggleStageInvalidatesChangedPathForRemote(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeGitService{localWorktree: false}
+	m := NewModel(Config{Git: fake})
+
+	msg := m.toggleStageForPath("pkg/file.go", false)().(stageToggledMsg)
+	if msg.err != nil {
+		t.Fatalf("toggleStageForPath returned error: %v", msg.err)
+	}
+	if got := fake.invalidatedPaths; !reflect.DeepEqual(got, [][]string{{"pkg/file.go"}}) {
+		t.Fatalf("InvalidateFiles paths = %#v, want %#v", got, [][]string{{"pkg/file.go"}})
 	}
 }
 

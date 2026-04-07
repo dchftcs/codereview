@@ -56,6 +56,9 @@ type GitService interface {
 	UntrackedFiles() ([]string, error)
 	ListFiles() ([]string, error)
 	ReadFile(path string) ([]byte, error)
+	PrefetchFiles(paths []string) error
+	InvalidateFiles(paths []string)
+	ClearFileCache()
 	RepoRoot() string
 	DisplayRoot() string
 	HasLocalWorkingTree() bool
@@ -112,6 +115,18 @@ func (g defaultGitService) ListFiles() ([]string, error) {
 
 func (g defaultGitService) ReadFile(path string) ([]byte, error) {
 	return g.svc.ReadFile(path)
+}
+
+func (g defaultGitService) PrefetchFiles(paths []string) error {
+	return g.svc.PrefetchFiles(paths)
+}
+
+func (g defaultGitService) InvalidateFiles(paths []string) {
+	g.svc.InvalidateFiles(paths)
+}
+
+func (g defaultGitService) ClearFileCache() {
+	g.svc.ClearFileCache()
 }
 
 func (g defaultGitService) RepoRoot() string {
@@ -231,21 +246,21 @@ func NewModel(cfg Config) Model {
 	dv := newDiffView()
 	dv.highlight = cfg.Highlight
 	m := Model{
-		config:         cfg,
-		fileListWidth:  30,
-		review:         review.New(),
-		diffView:       dv,
-		focus:          focusDiff,
-		generalPanel:   generalPanel{},
-		bottomBar:      newBottomBarInput(),
-		git:            cfg.Git,
-		expandedSet:    make(map[int]bool),
-		fileStates:     make(map[string]fileState),
-		referenceFiles: make(map[string]*diff.FileDiff),
-		statusSnapshot: make(map[string]statusSnapshotEntry),
-		statusEpoch:    1,
+		config:             cfg,
+		fileListWidth:      30,
+		review:             review.New(),
+		diffView:           dv,
+		focus:              focusDiff,
+		generalPanel:       generalPanel{},
+		bottomBar:          newBottomBarInput(),
+		git:                cfg.Git,
+		expandedSet:        make(map[int]bool),
+		fileStates:         make(map[string]fileState),
+		referenceFiles:     make(map[string]*diff.FileDiff),
+		statusSnapshot:     make(map[string]statusSnapshotEntry),
+		statusEpoch:        1,
 		statusPollInterval: cfg.Git.StatusPollInterval(),
-		now:            time.Now,
+		now:                time.Now,
 	}
 	applyDiffContext(m.review, cfg.RevSpec, cfg.UnstagedOnly)
 	m.generalPanel.review = m.review
@@ -327,6 +342,9 @@ func (m *Model) loadDiffWithSelection(preserveSelection string) tea.Cmd {
 
 func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int) tea.Cmd {
 	return func() tea.Msg {
+		if !m.git.HasLocalWorkingTree() {
+			m.git.ClearFileCache()
+		}
 		var (
 			rawDiff       string
 			collapsedDirs []gitpkg.CollapsedDir
@@ -344,6 +362,9 @@ func (m Model) loadDiffForStatusEpoch(preserveSelection string, statusEpoch int)
 		files, err := diff.Parse(rawDiff)
 		if err != nil {
 			return diffLoadedMsg{err: err}
+		}
+		if !m.git.HasLocalWorkingTree() {
+			_ = m.git.PrefetchFiles(diffPrefetchPaths(files))
 		}
 
 		commits, _ := m.git.Log(50)
@@ -757,6 +778,7 @@ func (m *Model) applyDiffLoaded(msg diffLoadedMsg) {
 	prevRoot := m.fileList.root
 	m.fileList = newFileListWithSource(msg.files, m.git.RepoRoot(), m.git.DisplayRoot(), m.git.ListFiles)
 	m.fileList.review = m.review
+	m.referenceFiles = make(map[string]*diff.FileDiff)
 	if prevReadSet != nil {
 		m.fileList.readSet = prevReadSet
 	}
@@ -905,6 +927,24 @@ func filterDiffFiles(files []diff.FileDiff, pathFilter string) []diff.FileDiff {
 		}
 	}
 	return out
+}
+
+func diffPrefetchPaths(files []diff.FileDiff) []string {
+	seen := make(map[string]struct{}, len(files))
+	paths := make([]string, 0, len(files))
+	for i := range files {
+		path := files[i].NewName
+		if path == "/dev/null" || path == "" {
+			continue
+		}
+		path = filepath.ToSlash(path)
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func matchesPathFilter(filePath, filter string) bool {
@@ -1067,6 +1107,9 @@ func (m *Model) canToggleStage() bool {
 
 func (m Model) toggleStageForPath(path string, staged bool) tea.Cmd {
 	return func() tea.Msg {
+		if !m.git.HasLocalWorkingTree() {
+			m.git.InvalidateFiles([]string{path})
+		}
 		var err error
 		action := "Staged " + path
 		nextStaged := true
@@ -2316,6 +2359,9 @@ func (m *Model) navigateCommit(delta int) tea.Cmd {
 	m.review.CommitSubject = commit.Subject
 
 	return func() tea.Msg {
+		if !m.git.HasLocalWorkingTree() {
+			m.git.ClearFileCache()
+		}
 		rawDiff, _, err := m.git.Diff(commit.Hash)
 		if err != nil {
 			return commitLoadedMsg{err: err, idx: newIdx, commit: commit}
@@ -2323,6 +2369,9 @@ func (m *Model) navigateCommit(delta int) tea.Cmd {
 		files, err := diff.Parse(rawDiff)
 		if err != nil {
 			return commitLoadedMsg{err: err, idx: newIdx, commit: commit}
+		}
+		if !m.git.HasLocalWorkingTree() {
+			_ = m.git.PrefetchFiles(diffPrefetchPaths(files))
 		}
 		return commitLoadedMsg{files: files, idx: newIdx, commit: commit}
 	}
